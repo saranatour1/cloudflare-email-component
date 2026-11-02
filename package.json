@@ -1,0 +1,82 @@
+{
+  "name": "@saranatour1/cloudflare-email-component",
+  "description": "Send and store email through Cloudflare from Convex.",
+  "repository": "github:saranatour1/cloudflare-email-component",
+  "homepage": "https://github.com/saranatour1/cloudflare-email-component#readme",
+  "bugs": {
+    "url": "https://github.com/saranatour1/cloudflare-email-component/issues"
+  },
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "keywords": [
+    "convex",
+    "component"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "convex dev --start 'pnpm run dev:build'",
+    "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'pnpm run build:codegen' --initial",
+    "predev": "convex init && pnpm run build:codegen",
+    "build": "tsc --project ./tsconfig.build.json",
+    "build:codegen": "convex codegen --component-dir ./src/component && pnpm run build",
+    "build:clean": "rm -rf dist *.tsbuildinfo && pnpm run build:codegen",
+    "typecheck": "tsc --noEmit && tsc -p example/convex",
+    "lint": "vp lint .",
+    "test": "vp test run --typecheck",
+    "test:watch": "vp test --typecheck --clearScreen false",
+    "test:debug": "vp test --inspect-brk --no-file-parallelism",
+    "test:coverage": "vp test run --coverage --coverage.reporter=text",
+    "prepare": "pnpm run build",
+    "preversion": "pnpm install --frozen-lockfile && pnpm run build:clean && pnpm run test && pnpm run lint && pnpm run typecheck",
+    "alpha": "pnpm version prerelease --preid alpha && pnpm publish --tag alpha && git push --follow-tags",
+    "release": "pnpm version patch && pnpm publish && git push --follow-tags",
+    "version": "( pnpm whoami || pnpm login ) && vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && vp fmt CHANGELOG.md && git add CHANGELOG.md"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./test": "./src/test.ts",
+    "./_generated/component.js": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./_generated/component": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./convex.config.js": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    },
+    "./convex.config": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    }
+  },
+  "peerDependencies": {
+    "convex": "^1.43.0"
+  },
+  "devDependencies": {
+    "@convex-dev/eslint-plugin": "^5.0.0",
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^24.13.3",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "chokidar-cli": "3.0.0",
+    "convex": "^1.44.0",
+    "convex-test": "0.0.61",
+    "globals": "^17.9.0",
+    "pkg-pr-new": "^0.0.86",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "types": "./dist/client/index.d.ts",
+  "module": "./dist/client/index.js",
+  "packageManager": "pnpm@12.6.0"
+}
