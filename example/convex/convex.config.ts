@@ -7,6 +7,7 @@ const app = defineApp({
     CLOUDFLARE_ACCOUNT_ID: v.optional(v.string()),
     CLOUDFLARE_API_TOKEN: v.optional(v.string()),
     INBOUND_SECRET: v.optional(v.string()),
+    EVENTS_SECRET: v.optional(v.string()),
   },
 });
 app.use(cloudflareEmail);

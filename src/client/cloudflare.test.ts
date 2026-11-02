@@ -8,11 +8,19 @@ import {
 } from "vite-plus/test";
 import {
   accessOf,
+  addSuppression,
   createRule,
+  deleteSuppression,
+  importSuppressions,
+  listSuppressions,
+  removeDeliveryEvents,
+  setUpDeliveryEvents,
   removeInbound,
   ruleFor,
   sha256,
+  toBase64,
   tokenStatus,
+  updateSuppression,
   uploadWorker,
   zoneNamesOf,
 } from "./cloudflare.js";
@@ -166,4 +174,185 @@ test("removeInbound deletes every rule and the Worker, skipping an empty rule id
     ["DELETE", "/zones/z/email/routing/rules/alias"],
     ["DELETE", "/accounts/acc/workers/scripts/w"],
   ]);
+});
+
+test("toBase64 handles more than one piece, and any byte", () => {
+  const bytes = Uint8Array.from({ length: 20000 }, (_, i) => i % 256);
+  const decoded = Uint8Array.from(atob(toBase64(bytes.buffer)), (c) =>
+    c.charCodeAt(0),
+  );
+  expect(decoded).toEqual(bytes);
+});
+
+describe("suppressions", () => {
+  const path = "/accounts/acc/email/sending/suppressions";
+  const called = () => {
+    const [url, init] = fetchMock.mock.lastCall!;
+    return {
+      path: (url as string).split("/v4")[1],
+      method: init!.method,
+      body: init!.body && JSON.parse(init!.body as string),
+    };
+  };
+
+  test("lists by filter and gives the next cursor", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: true,
+          result: [{ id: "s", read_only: true }],
+          result_info: { cursor: "next" },
+        }),
+      ),
+    );
+    const { suppressions, cursor } = await listSuppressions("acc", "t", {
+      scope_type: "sending_domain",
+      scope_value: "mail.example.com",
+    });
+    expect(suppressions[0]!.read_only).toBe(true);
+    expect(cursor).toBe("next");
+    expect(called().path).toBe(
+      `${path}?scope_type=sending_domain&scope_value=mail.example.com`,
+    );
+  });
+
+  test("adds one for a single sending domain", async () => {
+    route({ [path]: { id: "s" } });
+    const scope = {
+      type: "sending_domain",
+      value: "mail.example.com",
+    } as const;
+    await addSuppression("acc", "t", { email: "a@example.com", scope });
+    expect(called()).toEqual({
+      path,
+      method: "POST",
+      body: { email: "a@example.com", scope },
+    });
+  });
+
+  test("imports in bulk", async () => {
+    route({ [`${path}/bulk`]: { items: [] } });
+    await importSuppressions("acc", "t", [{ email: "a@example.com" }]);
+    expect(called()).toMatchObject({
+      path: `${path}/bulk`,
+      body: { items: [{ email: "a@example.com" }] },
+    });
+  });
+
+  test("updates and deletes by id", async () => {
+    route({ [`${path}/s`]: { id: "s" } });
+    await updateSuppression("acc", "t", "s", { expires_at: null });
+    expect(called()).toMatchObject({
+      method: "PATCH",
+      body: { expires_at: null },
+    });
+    await deleteSuppression("acc", "t", "s");
+    expect(called()).toMatchObject({ path: `${path}/s`, method: "DELETE" });
+  });
+
+  test("throws Cloudflare's reason", async () => {
+    route({});
+    await expect(listSuppressions("acc", "t")).rejects.toThrow("no");
+    await expect(
+      addSuppression("acc", "t", { email: "a@example.com" }),
+    ).rejects.toThrow("no");
+  });
+});
+
+describe("setUpDeliveryEvents", () => {
+  const options = {
+    name: "events",
+    zoneId: "z",
+    domain: "mail.example.com",
+    eventsUrl: "https://app.example.com/email/events",
+    secret: "s3cret",
+  };
+  const calls = () =>
+    fetchMock.mock.calls.map(([url, init]) => [
+      init!.method ?? "GET",
+      (url as string).split("/v4")[1],
+    ]);
+  /** Answers every call, and makes new queues get ids from their names. */
+  const answering = (failOn?: string) =>
+    fetchMock.mockImplementation((url, init) => {
+      const path = (url as string).split("/v4")[1]!;
+      if (path === failOn) return Promise.resolve(refused("not allowed"));
+      if (init!.method === "POST" && path.endsWith("/queues")) {
+        const { queue_name } = JSON.parse(init!.body as string);
+        return Promise.resolve(answer({ queue_id: `id-${queue_name}` }));
+      }
+      return Promise.resolve(answer({ id: "sub" }));
+    });
+  const subscriptions = "/accounts/acc/event_subscriptions/subscriptions";
+
+  test("creates the queues, the Worker, its consumer and the subscription", async () => {
+    answering();
+    expect(await setUpDeliveryEvents("acc", "t", options)).toEqual({
+      queueId: "id-events",
+      deadLetterQueueId: "id-events-dlq",
+      subscriptionId: "sub",
+    });
+    expect(calls()).toEqual([
+      ["POST", "/accounts/acc/queues"],
+      ["POST", "/accounts/acc/queues"],
+      ["PUT", "/accounts/acc/workers/scripts/events"],
+      ["POST", "/accounts/acc/queues/id-events/consumers"],
+      ["POST", subscriptions],
+    ]);
+
+    const bodyOf = (i: number) => fetchMock.mock.calls[i]![1]!.body as string;
+    const { bindings } = JSON.parse(
+      (fetchMock.mock.calls[2]![1]!.body as FormData).get("metadata") as string,
+    );
+    expect(bindings).toEqual([
+      { type: "plain_text", name: "EVENTS_URL", text: options.eventsUrl },
+      { type: "secret_text", name: "SECRET", text: "s3cret" },
+    ]);
+    expect(JSON.parse(bodyOf(3))).toMatchObject({
+      type: "worker",
+      script_name: "events",
+      dead_letter_queue: "events-dlq",
+    });
+    expect(JSON.parse(bodyOf(4))).toEqual({
+      name: "events",
+      enabled: true,
+      source: { type: "email.sending", zone_id: "z", domain: options.domain },
+      destination: { type: "queues.queue", queue_id: "id-events" },
+      events: [
+        "message.delivered",
+        "message.deferred",
+        "message.bounced",
+        "message.failed",
+        "message.rejected",
+        "message.complained",
+      ],
+    });
+  });
+
+  test("takes everything back down if a step fails", async () => {
+    answering(subscriptions);
+    await expect(setUpDeliveryEvents("acc", "t", options)).rejects.toThrow(
+      "not allowed",
+    );
+    expect(calls().slice(-3)).toEqual([
+      ["DELETE", "/accounts/acc/queues/id-events"],
+      ["DELETE", "/accounts/acc/queues/id-events-dlq"],
+      ["DELETE", "/accounts/acc/workers/scripts/events"],
+    ]);
+  });
+
+  test("removeDeliveryEvents starts with the subscription", async () => {
+    answering();
+    await removeDeliveryEvents("acc", "t", "events", {
+      queueId: "q",
+      deadLetterQueueId: "d",
+      subscriptionId: "sub",
+    });
+    expect(calls()).toEqual([
+      ["DELETE", `${subscriptions}/sub`],
+      ["DELETE", "/accounts/acc/queues/q"],
+      ["DELETE", "/accounts/acc/queues/d"],
+      ["DELETE", "/accounts/acc/workers/scripts/events"],
+    ]);
+  });
 });

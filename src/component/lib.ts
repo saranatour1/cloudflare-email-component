@@ -9,14 +9,15 @@ import {
   mutation,
   query,
 } from "./_generated/server.js";
+import { deliveryOf, messageIdKey, removeEventsOf } from "./events.js";
 import schema, { vEmail } from "./schema.js";
+import { sendThroughCloudflare } from "./send.js";
 
 const emailDoc = schema.doc("emails");
 const direction = v.union(v.literal("inbound"), v.literal("outbound"));
 
 // Past the 10 minutes an action can run, so the send can't still be going.
 const stuckAfterMs = 15 * 60 * 1000;
-const retryWaitsMs = [1000, 3000];
 
 export const queue = mutation({
   args: { owner: v.string(), payload: v.string() },
@@ -46,74 +47,18 @@ export const expire = internalMutation({
   },
 });
 
-// shortcut: retries only ride out a few seconds; schedule an app action with just the
-// emailId, which reopens the sealed connection, if throttling lasts longer than that.
-/** Sends through Cloudflare and returns its Message-ID if it gives one, or why it failed. Stores nothing. */
+/** Prefer the client's `sendEmail`, which sends from the app's own action. */
 export const send = action({
   args: { accountId: v.string(), apiToken: v.string(), email: vEmail },
   returns: v.object({
     messageId: v.optional(v.string()),
     error: v.optional(v.string()),
+    delivered: v.optional(v.array(v.string())),
+    queued: v.optional(v.array(v.string())),
+    permanentBounces: v.optional(v.array(v.string())),
+    suppressed: v.optional(v.array(v.string())),
   }),
-  handler: async (
-    _ctx,
-    { accountId, apiToken, email: { replyTo, ...email } },
-  ) => {
-    if (email.to.length === 0) return { error: "`to` must not be empty" };
-    if (!email.text && !email.html)
-      return { error: "One of `text` or `html` is required" };
-    try {
-      const post = () =>
-        fetch(
-          `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/email/sending/send`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${apiToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ ...email, reply_to: replyTo }),
-          },
-        );
-      let res = await post();
-      // 429 and 503 mean it never went out. Anything else, a thrown fetch included, may
-      // have, and Cloudflare takes no idempotency key, so a retry could send it twice.
-      for (const wait of retryWaitsMs) {
-        if (res.status !== 429 && res.status !== 503) break;
-        await new Promise((resolve) => setTimeout(resolve, wait));
-        res = await post();
-      }
-      const body = (await res.json().catch(() => null)) as {
-        success?: boolean;
-        errors?: { message: string }[];
-        result?: {
-          message_id?: string;
-          delivered?: string[];
-          queued?: string[];
-          permanent_bounces?: string[];
-          suppressed_recipients?: string[];
-        };
-      } | null;
-      if (!res.ok || !body?.success)
-        return {
-          error:
-            body?.errors?.map((e) => e.message).join("; ") ||
-            `HTTP ${res.status}`,
-        };
-      // Cloudflare can say success while refusing every address.
-      const { delivered, queued, permanent_bounces, suppressed_recipients } =
-        body.result ?? {};
-      const dropped = [
-        ...(permanent_bounces ?? []),
-        ...(suppressed_recipients ?? []),
-      ];
-      if (dropped.length && !delivered?.length && !queued?.length)
-        return { error: `Not delivered to ${dropped.join(", ")}` };
-      return { messageId: body.result?.message_id };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : String(e) };
-    }
-  },
+  handler: (_ctx, args) => sendThroughCloudflare(args),
 });
 
 export const markResult = mutation({
@@ -122,13 +67,21 @@ export const markResult = mutation({
     failed: v.boolean(),
     payload: v.optional(v.string()),
     error: v.optional(v.string()),
+    messageId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { emailId, failed, payload, error }) => {
+  handler: async (ctx, { emailId, failed, payload, error, messageId }) => {
+    const email = await ctx.db.get("emails", emailId);
+    if (!email) throw new Error("That email isn't here anymore");
+    const key = messageId && messageIdKey(messageId);
     await ctx.db.patch("emails", emailId, {
       status: failed ? "failed" : "sent",
       error,
       ...(payload && { payload }),
+      ...(key && {
+        messageId: key,
+        delivery: await deliveryOf(ctx, email.owner, key),
+      }),
     });
     return null;
   },
@@ -218,7 +171,9 @@ export const remove = mutation({
   returns: v.null(),
   handler: async (ctx, { emailId, owner }) => {
     const email = await ctx.db.get("emails", emailId);
-    if (email?.owner === owner) await ctx.db.delete("emails", emailId);
+    if (email?.owner !== owner) return null;
+    if (email.messageId) await removeEventsOf(ctx, owner, email.messageId);
+    await ctx.db.delete("emails", emailId);
     return null;
   },
 });
@@ -233,6 +188,12 @@ export const removeOwner = mutation({
       .take(limit + 1);
     for (const email of emails.slice(0, limit))
       await ctx.db.delete("emails", email._id);
-    return emails.length > limit;
+    const events = await ctx.db
+      .query("deliveryEvents")
+      .withIndex("by_owner_and_messageId", (q) => q.eq("owner", owner))
+      .take(limit + 1);
+    for (const event of events.slice(0, limit))
+      await ctx.db.delete("deliveryEvents", event._id);
+    return emails.length > limit || events.length > limit;
   },
 });

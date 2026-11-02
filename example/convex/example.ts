@@ -1,5 +1,9 @@
 import { v } from "convex/values";
-import { sendEmail, vEmail } from "@saranatour1/cloudflare-email-component";
+import {
+  sendEmail,
+  setUpDeliveryEvents,
+  vEmail,
+} from "@saranatour1/cloudflare-email-component";
 import { components } from "./_generated/api.js";
 import { env, internalAction, internalQuery } from "./_generated/server.js";
 
@@ -30,6 +34,37 @@ export const list = internalQuery({
     return await ctx.runQuery(components.cloudflareEmail.lib.list, {
       owner: "example",
       direction,
+    });
+  },
+});
+
+export const deliveryEvents = internalQuery({
+  args: { emailId: v.string() },
+  handler: async (ctx, { emailId }) => {
+    return await ctx.runQuery(components.cloudflareEmail.events.list, {
+      emailId,
+    });
+  },
+});
+
+/** Run once per sending domain. Keep what it returns for `removeDeliveryEvents`. */
+export const setUpEvents = internalAction({
+  args: { zoneId: v.string(), domain: v.string() },
+  handler: async (_ctx, { zoneId, domain }) => {
+    const accountId = env.CLOUDFLARE_ACCOUNT_ID;
+    const apiToken = env.CLOUDFLARE_API_TOKEN;
+    const secret = env.EVENTS_SECRET;
+    if (!accountId || !apiToken || !secret) {
+      throw new Error(
+        "Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN and EVENTS_SECRET.",
+      );
+    }
+    return await setUpDeliveryEvents(accountId, apiToken, {
+      name: `email-events-${domain.replaceAll(".", "-")}`,
+      zoneId,
+      domain,
+      eventsUrl: `${env.CONVEX_SITE_URL}/email/events`,
+      secret,
     });
   },
 });

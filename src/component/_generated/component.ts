@@ -23,6 +23,72 @@ import type { FunctionReference } from "convex/server";
  */
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
+    events: {
+      list: FunctionReference<
+        "query",
+        "internal",
+        { emailId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          at: number;
+          eventId: string;
+          messageId: string;
+          owner: string;
+          payload: string;
+          status:
+            | "delivered"
+            | "deferred"
+            | "bounced"
+            | "failed"
+            | "rejected"
+            | "complained";
+          terminal: boolean;
+        }>,
+        Name
+      >;
+      page: FunctionReference<
+        "query",
+        "internal",
+        { cursor: string | null },
+        {
+          continueCursor: string;
+          isDone: boolean;
+          page: Array<{ _id: string; owner: string; payload: string }>;
+        },
+        Name
+      >;
+      record: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          events: Array<{
+            at: number;
+            eventId: string;
+            messageId: string;
+            payload: string;
+            status:
+              | "delivered"
+              | "deferred"
+              | "bounced"
+              | "failed"
+              | "rejected"
+              | "complained";
+            terminal: boolean;
+          }>;
+          owner: string;
+        },
+        Array<{ emailId?: string; eventId: string; isNew: boolean }>,
+        Name
+      >;
+      reseal: FunctionReference<
+        "mutation",
+        "internal",
+        { from: string; id: string; payload: string },
+        null,
+        Name
+      >;
+    };
     lib: {
       get: FunctionReference<
         "query",
@@ -31,8 +97,16 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | {
           _creationTime: number;
           _id: string;
+          delivery?:
+            | "delivered"
+            | "deferred"
+            | "bounced"
+            | "failed"
+            | "rejected"
+            | "complained";
           direction: "inbound" | "outbound";
           error?: string;
+          messageId?: string;
           owner: string;
           payload: string;
           status: "queued" | "sent" | "failed" | "received";
@@ -46,8 +120,16 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         Array<{
           _creationTime: number;
           _id: string;
+          delivery?:
+            | "delivered"
+            | "deferred"
+            | "bounced"
+            | "failed"
+            | "rejected"
+            | "complained";
           direction: "inbound" | "outbound";
           error?: string;
+          messageId?: string;
           owner: string;
           payload: string;
           status: "queued" | "sent" | "failed" | "received";
@@ -57,7 +139,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       markResult: FunctionReference<
         "mutation",
         "internal",
-        { emailId: string; error?: string; failed: boolean; payload?: string },
+        {
+          emailId: string;
+          error?: string;
+          failed: boolean;
+          messageId?: string;
+          payload?: string;
+        },
         null,
         Name
       >;
@@ -119,25 +207,49 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           accountId: string;
           apiToken: string;
           email: {
-            attachments?: Array<{
-              content: string;
-              content_id?: string;
-              disposition: string;
-              filename: string;
-              type: string;
-            }>;
-            bcc?: Array<string>;
-            cc?: Array<string>;
-            from: string | { address: string; name: string };
+            attachments?: Array<
+              | {
+                  content: string;
+                  disposition: "attachment";
+                  filename: string;
+                  type: string;
+                }
+              | {
+                  content: string;
+                  content_id: string;
+                  disposition: "inline";
+                  filename: string;
+                  type: string;
+                }
+            >;
+            bcc?:
+              | string
+              | { address: string; name?: string }
+              | Array<string | { address: string; name?: string }>;
+            cc?:
+              | string
+              | { address: string; name?: string }
+              | Array<string | { address: string; name?: string }>;
+            from: string | { address: string; name?: string };
             headers?: Record<string, string>;
             html?: string;
-            replyTo?: string;
+            replyTo?: string | { address: string; name?: string };
             subject: string;
             text?: string;
-            to: Array<string>;
+            to?:
+              | string
+              | { address: string; name?: string }
+              | Array<string | { address: string; name?: string }>;
           };
         },
-        { error?: string; messageId?: string },
+        {
+          delivered?: Array<string>;
+          error?: string;
+          messageId?: string;
+          permanentBounces?: Array<string>;
+          queued?: Array<string>;
+          suppressed?: Array<string>;
+        },
         Name
       >;
     };

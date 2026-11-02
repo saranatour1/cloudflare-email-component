@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as events from "../events.js";
 import type * as lib from "../lib.js";
+import type * as send from "../send.js";
 
 import type {
   ApiFromModules,
@@ -18,7 +20,9 @@ import type {
 import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
+  events: typeof events;
   lib: typeof lib;
+  send: typeof send;
 }> = anyApi as any;
 
 /**
