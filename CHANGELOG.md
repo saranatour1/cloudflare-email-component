@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- First version published from GitHub Actions with trusted publishing, so npm
+  shows its provenance. 0.2.1 was tagged but never reached npm, and its changes
+  are in this version.
+
 ## 0.2.1
 
 - Test files no longer ship in the package. One of them used `new Function`,
