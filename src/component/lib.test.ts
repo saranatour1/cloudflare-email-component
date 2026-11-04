@@ -48,14 +48,14 @@ describe("send", () => {
     fetchMock.mockResolvedValueOnce(
       accepted({ message_id: "<a@b>", delivered: email.to }),
     );
-    expect(await send()).toEqual({ messageId: "<a@b>" });
+    expect(await send()).toMatchObject({ messageId: "<a@b>" });
   });
 
   it("counts a queued address as sent", async () => {
     fetchMock.mockResolvedValueOnce(
       accepted({ message_id: "<a@b>", queued: email.to }),
     );
-    expect(await send()).toEqual({ messageId: "<a@b>" });
+    expect(await send()).toMatchObject({ messageId: "<a@b>" });
   });
 
   it.each(["permanent_bounces", "suppressed_recipients"])(
@@ -69,7 +69,7 @@ describe("send", () => {
           [field]: email.to,
         }),
       );
-      expect(await send()).toEqual({
+      expect(await send()).toMatchObject({
         error: "Not delivered to you@example.com",
       });
     },
@@ -81,7 +81,7 @@ describe("send", () => {
       .mockResolvedValueOnce(
         accepted({ message_id: "<a@b>", delivered: email.to }),
       );
-    expect(await send()).toEqual({ messageId: "<a@b>" });
+    expect(await send()).toMatchObject({ messageId: "<a@b>" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -101,6 +101,124 @@ describe("send", () => {
     fetchMock.mockRejectedValueOnce(new Error("connection lost"));
     expect(await send()).toEqual({ error: "connection lost" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("send, the way Cloudflare's examples address mail", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const body = { from: "me@example.com", subject: "Hi", text: "Hello" };
+  const sendEmail = (email: object) =>
+    initConvexTest().action(api.lib.send, {
+      accountId: "account",
+      apiToken: "token",
+      email: { ...body, ...email },
+    });
+  const sent = () =>
+    JSON.parse(fetchMock.mock.lastCall![1]!.body as string) as object;
+
+  const jane = { address: "jane@example.com", name: "Jane Doe" };
+  it.each([
+    ["one address", { to: "a@example.com" }],
+    ["several", { to: ["a@example.com", "b@example.com"] }],
+    ["a named address", { to: jane, from: jane }],
+    ["plain and named together", { to: ["a@example.com", jane] }],
+    ["cc and bcc alone", { cc: ["a@example.com"], bcc: "b@example.com" }],
+  ])("passes on %s unchanged", async (_name, email) => {
+    fetchMock.mockResolvedValueOnce(accepted({ message_id: "<a@b>" }));
+    expect(await sendEmail(email)).toMatchObject({ messageId: "<a@b>" });
+    expect(sent()).toEqual({ ...body, ...email });
+  });
+
+  it("sends replyTo as reply_to", async () => {
+    fetchMock.mockResolvedValueOnce(accepted({ message_id: "<a@b>" }));
+    await sendEmail({ to: "a@example.com", replyTo: jane });
+    expect(sent()).toMatchObject({ reply_to: jane });
+    expect(sent()).not.toHaveProperty("replyTo");
+  });
+
+  it("passes on files, inline images and headers", async () => {
+    const extras = {
+      attachments: [
+        {
+          content: "AAAA",
+          filename: "a.pdf",
+          type: "application/pdf",
+          disposition: "attachment",
+        },
+        {
+          content: "BBBB",
+          filename: "logo.png",
+          type: "image/png",
+          disposition: "inline",
+          content_id: "logo",
+        },
+      ],
+      headers: { "List-Unsubscribe": "<https://example.com/u>" },
+    };
+    fetchMock.mockResolvedValueOnce(accepted({ message_id: "<a@b>" }));
+    await sendEmail({ to: "a@example.com", ...extras });
+    expect(sent()).toMatchObject(extras);
+  });
+
+  it("refuses an inline image with no content_id", async () => {
+    await expect(
+      sendEmail({
+        to: "a@example.com",
+        attachments: [
+          { content: "A", filename: "a", type: "t", disposition: "inline" },
+        ],
+      }),
+    ).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says who got it and who didn't", async () => {
+    fetchMock.mockResolvedValueOnce(
+      accepted({
+        message_id: "<a@b>",
+        delivered: ["a@example.com"],
+        queued: ["b@example.com"],
+        permanent_bounces: ["c@example.com"],
+        suppressed_recipients: ["d@example.com"],
+      }),
+    );
+    expect(await sendEmail({ to: "a@example.com" })).toEqual({
+      messageId: "<a@b>",
+      delivered: ["a@example.com"],
+      queued: ["b@example.com"],
+      permanentBounces: ["c@example.com"],
+      suppressed: ["d@example.com"],
+    });
+  });
+
+  it.each([
+    ["no recipients", {}, "`to`, `cc` or `bcc`"],
+    ["an empty list", { to: [] }, "`to`, `cc` or `bcc`"],
+    ["no body", { to: "a@example.com", text: "" }, "`text` or `html`"],
+    [
+      "over 50 recipients across to, cc and bcc",
+      {
+        to: Array.from({ length: 30 }, (_, i) => `to${i}@example.com`),
+        cc: Array.from({ length: 20 }, (_, i) => `cc${i}@example.com`),
+        bcc: "one-too-many@example.com",
+      },
+      "at most 50",
+    ],
+  ])("refuses %s without calling Cloudflare", async (_name, email, reason) => {
+    const { error } = await sendEmail(email);
+    expect(error).toContain(reason);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

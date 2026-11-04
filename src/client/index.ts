@@ -2,12 +2,19 @@ import type { GenericActionCtx, GenericDataModel } from "convex/server";
 import type { Infer } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
 import { vEmail } from "../component/schema.js";
+import { type DeliveryEvent, statuses } from "../component/deliveryEvents.js";
+import { sendThroughCloudflare } from "../component/send.js";
 
 export * from "./cloudflare.js";
 export { vEmail };
+export {
+  type DeliveryEvent,
+  parseDeliveryEvents,
+} from "../component/deliveryEvents.js";
 
 export type Email = Infer<typeof vEmail>;
 
+type RunMutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
 type ActionCtx = Pick<
   GenericActionCtx<GenericDataModel>,
   "runMutation" | "runAction"
@@ -17,6 +24,8 @@ type ActionCtx = Pick<
  * Queues, sends and records one email. `seal` turns what gets stored into the
  * opaque string the component keeps, so encrypt there, or pass `(text) => text`
  * to store it as plain text. It sees the email and any error, never the token.
+ * Leave out `accountId` and `apiToken` to use the ones bound in `app.use`, which
+ * caps the email at a function argument's 16 MiB instead of Cloudflare's 25 MiB.
  * A send that dies midway is marked failed by the component 15 minutes later.
  */
 export async function sendEmail(
@@ -24,8 +33,8 @@ export async function sendEmail(
   component: ComponentApi,
   args: {
     owner: string;
-    accountId: string;
-    apiToken: string;
+    accountId?: string;
+    apiToken?: string;
     email: Email;
     seal: (text: string) => string | Promise<string>;
   },
@@ -36,15 +45,55 @@ export async function sendEmail(
     // Attachments stay out, they'd run into the document size limit.
     payload: await seal(JSON.stringify({ ...email, attachments: [] })),
   });
-  const { messageId, error } = await ctx.runAction(component.lib.send, {
-    accountId,
-    apiToken,
-    email,
-  });
+  // Right here when it can be: a component call caps its arguments at 16 MiB,
+  // under Cloudflare's 25 MiB.
+  const result =
+    accountId && apiToken
+      ? await sendThroughCloudflare({ accountId, apiToken, email })
+      : await ctx.runAction(component.lib.send, { email });
+  const { error } = result;
   await ctx.runMutation(component.lib.markResult, {
     emailId,
     failed: error !== undefined,
     error: error && (await seal(error)),
+    messageId: result.messageId,
   });
-  return { emailId, messageId, error };
+  return { emailId, ...result };
+}
+
+/** Cloudflare's advice for when to stop mailing an address: a complaint or a hard bounce. */
+export const isUndeliverable = ({ type, payload }: DeliveryEvent) =>
+  type === "cf.email.sending.message.complained" ||
+  (type === "cf.email.sending.message.bounced" &&
+    payload.bounce?.type === "hard");
+
+/**
+ * Stores events and updates the status of the emails they're about. Queues can deliver an
+ * event twice, so act only on results where `isNew` is true. `seal` sees each event's
+ * payload, which holds the recipient and subject.
+ */
+export async function recordDeliveryEvents(
+  ctx: RunMutationCtx,
+  component: ComponentApi,
+  args: {
+    owner: string;
+    events: DeliveryEvent[];
+    seal: (text: string) => string | Promise<string>;
+  },
+) {
+  const { owner, events, seal } = args;
+  const results = await ctx.runMutation(component.events.record, {
+    owner,
+    events: await Promise.all(
+      events.map(async ({ type, payload, metadata }) => ({
+        eventId: payload.eventId,
+        messageId: payload.messageId,
+        status: statuses[type],
+        terminal: payload.terminal ?? false,
+        at: Date.parse(metadata?.eventTimestamp ?? "") || Date.now(),
+        payload: await seal(JSON.stringify(payload)),
+      })),
+    ),
+  });
+  return results.map((result, i) => ({ ...result, event: events[i]! }));
 }

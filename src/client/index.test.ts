@@ -10,7 +10,14 @@ import { defineTestApp } from "convex-test";
 import { defineSchema } from "convex/server";
 import { v } from "convex/values";
 import componentTest from "../test.js";
-import { sendEmail, vEmail } from "./index.js";
+import {
+  type DeliveryEvent,
+  isUndeliverable,
+  parseDeliveryEvents,
+  recordDeliveryEvents,
+  sendEmail,
+  vEmail,
+} from "./index.js";
 
 const app = defineTestApp({
   schema: defineSchema({}),
@@ -27,6 +34,32 @@ const { api, createTest } = app.defineModules({
           apiToken: "secret-token",
           email,
           seal: (text) => `sealed:${text}`,
+        }),
+    }),
+    sendWithBoundEnv: app.action({
+      args: { email: vEmail },
+      handler: (ctx, { email }) =>
+        sendEmail(ctx, app.components.cloudflareEmail, {
+          owner: "me",
+          email,
+          seal: (text) => text,
+        }),
+    }),
+    receiveEvents: app.mutation({
+      args: { events: v.array(v.any()) },
+      handler: (ctx, { events }) =>
+        recordDeliveryEvents(ctx, app.components.cloudflareEmail, {
+          owner: "me",
+          events: parseDeliveryEvents(events),
+          seal: (text) => `sealed:${text}`,
+        }),
+    }),
+    eventsOf: app.query({
+      args: { emailId: v.string() },
+      handler: (ctx, { emailId }) =>
+        ctx.runQuery(app.components.cloudflareEmail.events.list, {
+          emailId,
+          paginationOpts: { numItems: 100, cursor: null },
         }),
     }),
     get: app.query({
@@ -47,7 +80,7 @@ const email = {
       content: "AAAA",
       filename: "a.txt",
       type: "text/plain",
-      disposition: "attachment",
+      disposition: "attachment" as const,
     },
   ],
 };
@@ -107,5 +140,124 @@ describe("sendEmail", () => {
     const stored = await t.query(api.mail.get, { emailId });
     expect(stored?.status).toBe("failed");
     expect(stored?.error).toBe("sealed:no");
+  });
+
+  test("without credentials, sends with the ones bound in app.use", async () => {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "bound-account");
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "bound-token");
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ success: true, result: { message_id: "<a@b>" } }),
+      ),
+    );
+    const t = createTest();
+    const { emailId, messageId } = await t.action(api.mail.sendWithBoundEnv, {
+      email: { ...email, attachments: [] },
+    });
+    vi.unstubAllEnvs();
+    expect(messageId).toBe("<a@b>");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain("/accounts/bound-account/");
+    expect(new Headers(init!.headers).get("Authorization")).toBe(
+      "Bearer bound-token",
+    );
+    expect((await t.query(api.mail.get, { emailId }))?.status).toBe("sent");
+  });
+
+  test("without credentials anywhere, records why it failed", async () => {
+    const t = createTest();
+    const { emailId, error } = await t.action(api.mail.sendWithBoundEnv, {
+      email,
+    });
+    expect(error).toMatch(/CLOUDFLARE_API_TOKEN/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await t.query(api.mail.get, { emailId }))?.status).toBe("failed");
+  });
+});
+
+const event = (type: string, over: object = {}) => ({
+  type: `cf.email.sending.message.${type}`,
+  source: { type: "email.sending", zoneId: "z", domain: "example.com" },
+  payload: {
+    eventId: `event-${type}`,
+    messageId: "<a@b>",
+    recipient: "you@example.com",
+    subject: "Hi",
+    terminal: true,
+    ...over,
+  },
+  metadata: { eventTimestamp: "2026-06-01T02:48:57.132Z" },
+});
+
+describe("parseDeliveryEvents", () => {
+  test("keeps Cloudflare's six kinds and leaves out anything else", () => {
+    const kinds = [
+      "delivered",
+      "deferred",
+      "bounced",
+      "failed",
+      "rejected",
+      "complained",
+    ];
+    const known = kinds.map((kind) => event(kind));
+    expect(
+      parseDeliveryEvents([
+        ...known,
+        event("somethingNew"),
+        { type: known[0]!.type, payload: { eventId: "no-ids" } },
+        null,
+        "text",
+      ]),
+    ).toEqual(known);
+  });
+});
+
+describe("isUndeliverable", () => {
+  const check = (e: object) => isUndeliverable(e as DeliveryEvent);
+  test("is a complaint or a hard bounce, not a soft one", () => {
+    expect(check(event("complained"))).toBe(true);
+    expect(check(event("bounced", { bounce: { type: "hard" } }))).toBe(true);
+    expect(check(event("bounced", { bounce: { type: "soft" } }))).toBe(false);
+    expect(check(event("deferred"))).toBe(false);
+    expect(check(event("delivered"))).toBe(false);
+  });
+});
+
+describe("recordDeliveryEvents", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("links events to the email sendEmail recorded, sealed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ success: true, result: { message_id: "<a@b>" } }),
+      ),
+    );
+    const t = createTest();
+    const { emailId } = await t.action(api.mail.send, { email });
+    const [result] = await t.mutation(api.mail.receiveEvents, {
+      events: [event("bounced", { bounce: { type: "hard" } })],
+    });
+    expect(result).toMatchObject({ isNew: true, emailId });
+    expect(isUndeliverable(result!.event)).toBe(true);
+
+    expect((await t.query(api.mail.get, { emailId }))?.delivery).toBe(
+      "bounced",
+    );
+    const [stored] = (await t.query(api.mail.eventsOf, { emailId })).page;
+    expect(stored?.status).toBe("bounced");
+    expect(stored?.at).toBe(Date.parse("2026-06-01T02:48:57.132Z"));
+    expect(stored?.payload.startsWith("sealed:")).toBe(true);
+    expect(JSON.parse(stored!.payload.slice(7)).recipient).toBe(
+      "you@example.com",
+    );
   });
 });

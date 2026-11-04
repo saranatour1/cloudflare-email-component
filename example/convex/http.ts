@@ -1,31 +1,54 @@
 import { httpRouter } from "convex/server";
-import { sha256 } from "@saranatour1/cloudflare-email-component";
-import { components } from "./_generated/api.js";
-import { env, httpAction } from "./_generated/server.js";
+import { internal } from "./_generated/api.js";
+import { httpAction } from "./_generated/server.js";
+import { inboxPage } from "./inboxPage.js";
 
+// /email/inbound and /email/events are the component's, mounted in convex.config.ts.
 const http = httpRouter();
 
-// Called by the Worker from `uploadWorker`. A 403 turns the message away; any
-// other failure makes Cloudflare try again later.
+// shortcut: no sign-in, so anyone with this deployment's URL can read this mail and
+// reply as your domain. Put your own auth in front of these routes before real use.
 http.route({
-  path: "/email/inbound",
+  path: "/inbox",
+  method: "GET",
+  handler: httpAction(async () => {
+    const nonce = crypto.randomUUID();
+    return new Response(inboxPage(nonce), {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        // Mail is written by strangers. The page only shows it as text, and this
+        // stops anything that gets past that from running or calling out.
+        "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/inbox/threads",
+  method: "GET",
+  handler: httpAction(async (ctx) =>
+    Response.json(await ctx.runAction(internal.inbox.threads, {}), {
+      headers: { "Cache-Control": "no-store" },
+    }),
+  ),
+});
+
+http.route({
+  path: "/inbox/reply",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
-    const bearer = req.headers.get("Authorization")?.replace(/^Bearer /, "");
-    const secret = env.INBOUND_SECRET;
-    if (!secret || !bearer || (await sha256(bearer)) !== (await sha256(secret)))
-      return new Response("Unauthorized", { status: 401 });
-    await ctx.runMutation(components.cloudflareEmail.lib.receive, {
-      owner: "example",
-      // shortcut: the raw message as plain text, which fails above the 1 MB
-      // document limit. Parse and encrypt it before keeping real mail.
-      payload: JSON.stringify({
-        from: req.headers.get("X-Envelope-From"),
-        to: req.headers.get("X-Envelope-To"),
-        raw: await req.text(),
-      }),
-    });
-    return new Response(null, { status: 204 });
+    const body = (await req.json().catch(() => null)) as {
+      emailId?: unknown;
+      text?: unknown;
+    } | null;
+    const { emailId, text } = body ?? {};
+    if (typeof emailId !== "string" || typeof text !== "string" || !text.trim())
+      return new Response("Expected an emailId and some text", { status: 400 });
+    return Response.json(
+      await ctx.runAction(internal.inbox.reply, { emailId, text }),
+    );
   }),
 });
 

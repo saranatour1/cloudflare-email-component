@@ -59,7 +59,7 @@
     }
   },
   "peerDependencies": {
-    "convex": "^1.43.0"
+    "convex": "^1.49.0"
   },
   "devDependencies": {
     "@convex-dev/eslint-plugin": "^5.0.0",
@@ -67,14 +67,15 @@
     "@types/node": "^24.13.3",
     "@typescript/native": "npm:typescript@^7.0.2",
     "chokidar-cli": "3.0.0",
-    "convex": "^1.44.0",
-    "convex-test": "0.0.61",
+    "convex": "^1.49.0",
+    "convex-test": "0.0.67",
     "globals": "^17.9.0",
     "pkg-pr-new": "^0.0.86",
+    "postal-mime": "^4.2.0",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vite": "catalog:",
-    "vitest": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   },
   "types": "./dist/client/index.d.ts",
   "module": "./dist/client/index.js",

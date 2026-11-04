@@ -1,0 +1,67 @@
+---
+name: shipping
+description:
+  How changes ship from cloudflare-email-component. Merging to main deploys
+  nothing, an npm release is the real release and is the user's to run, the
+  public API is what installed apps depend on, env files never go in git, and
+  the Convex deployment here is dev only. Use before merging a PR, cutting a
+  release, changing an export, a component function or the schema, running
+  Convex commands, or adding config.
+---
+
+# Shipping
+
+## A merge isn't a release, a publish is
+
+Merging to `main` only runs CI (`.github/workflows/test.yml`: build, test,
+typecheck, `vp check`). Nothing deploys. Each PR also gets a preview package
+through `pkg-pr-new`, which is the way to try a change in another app before
+release.
+
+The release is `pnpm release` (patch) or `pnpm alpha` (prerelease). Each one
+runs `preversion` (clean build, tests, lint, typecheck), bumps the version,
+opens `vim` to edit `CHANGELOG.md`, publishes to npm and pushes the tag. So:
+
+- Leave releasing to the user. It needs their npm login and an interactive
+  editor, and a published version can't be reused, even after an unpublish.
+- `pnpm release` always bumps the patch number. If the change breaks something,
+  tell the user to run `pnpm version minor` (or `major`) before publishing.
+  needs the version heading.
+
+## The public API
+
+Apps that install the package depend on:
+
+- the client exports in `src/client/index.ts` and `src/client/cloudflare.ts`,
+- the public component functions in `src/component/lib.ts` and `events.ts`
+  (`components.cloudflareEmail.*`),
+- the schema in `src/component/schema.ts`, since their stored data has to keep
+  validating after an upgrade.
+
+Renaming or removing any of these, adding a required argument, or narrowing a
+validator is a breaking change. Say so in the PR and the changelog. Add a field
+as `v.optional`. Update `README.md` and `docs/API.md` along with the change.
+
+## Convex commands
+
+`pnpm run dev` pushes to the dev deployment named in the untracked `.env.local`,
+for the example app. This repo has no production deployment, so never add
+`--prod` to a `convex` command or to `scripts/rotate-env.sh`. The permission
+check refuses force-pushes and remote branch deletes even after the user says
+yes. Don't retry them or route around the check. Give the user the exact
+command.
+
+## No env files in git
+
+Never commit `.env*`, even when every value is public. Keep them fully ignored,
+with no `!` exceptions. Set secrets with `pnpm convex env set` (or
+`scripts/rotate-env.sh`), and never ask the user to paste a token into chat.
+Don't hardcode deployment names or URLs in tracked files. Write `<deployment>`
+instead, as the README does.
+
+## Editing a PR
+
+`gh pr edit` (gh 2.71) exits 1 with a Projects (classic) error and changes
+nothing. Use
+`gh api -X PATCH repos/saranatour1/cloudflare-email-component/pulls/<n> -F body=@file`,
+then re-read the PR to confirm.

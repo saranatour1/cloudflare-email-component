@@ -16,4 +16,4 @@ node_modules
 .vitest/
 
 # Env
-.Env
+.env*
