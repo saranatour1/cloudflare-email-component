@@ -31,17 +31,6 @@ See the
 [changelog](https://github.com/saranatour1/cloudflare-email-component/blob/main/CHANGELOG.md)
 for what changed in each version.
 
-## How it works
-
-```
-Sending       your action ─▶ sendEmail ─▶ Cloudflare API ─▶ recipient
-Delivery      Cloudflare ─▶ Queue ─▶ events Worker ─▶ POST /email/events ─▶ your onEvents
-Receiving     sender ─▶ Email Routing ─▶ inbound Worker ─▶ POST /email/inbound ─▶ your onReceive
-```
-
-Convex can't receive email or read Cloudflare's queues directly, so the
-component ships two small Workers. They forward to HTTP routes the component
-serves, which check a shared secret and call handlers in your app.
 
 ## Pick what you need
 
@@ -484,29 +473,13 @@ has a complete handler.
 
 What this component chooses, and what that costs you:
 
-- **Your Cloudflare account, your data.** Mail goes through your own account and
-  is stored in your own Convex deployment, with no third-party email service in
-  between. In exchange, you set up the domain, the token and the Workers
-  yourself.
-- **Opaque storage.** The component stores only the strings `seal` returns, so
-  you choose the encryption. In exchange, it can't search or filter by subject
-  or address: keep your own index of anything you need to query.
 - **No automatic retries.** Only a 429 or 503 is retried, because Cloudflare has
   no idempotency key and a retry could send the same email twice. For guaranteed
   delivery after a timeout, queue sends yourself, for example with
   `@convex-dev/workpool`, and accept that a rare email may go out twice.
 - **Attachments aren't stored.** They'd quickly exceed the 1 MiB document limit.
   Keep files in Convex file storage and attach them at send time.
-- **Inbound mail goes through a Worker.** Convex can't accept SMTP, so a Worker
-  you deploy relays each message. It's one more piece to deploy, but it lets
-  your handler accept, reject or forward each message.
-- **Delivery status arrives later.** `sendEmail` only knows that Cloudflare
-  accepted the email. Bounces and complaints come from delivery events, seconds
-  to hours later, and only if you set them up.
-- **Beta services.** Cloudflare Email Sending and its event subscriptions are
-  new, and their APIs may still change. Pin the component's version and read the
-  changelog before upgrading.
-
+  
 ## Testing
 
 ```ts
