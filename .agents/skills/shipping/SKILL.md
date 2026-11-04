@@ -59,6 +59,14 @@ with no `!` exceptions. Set secrets with `pnpm convex env set` (or
 Don't hardcode deployment names or URLs in tracked files. Write `<deployment>`
 instead, as the README does.
 
+## Agent skills stay out of the package
+
+The skills from `npx convex ai-files install` (`.claude/skills/convex*`,
+`.agents/skills/convex*`, `skills-lock.json`), convex-test included, are
+untracked. Ask the user before committing them. If they want them, they go in
+git and the PR, never in the npm package: keep `"files"` in `package.json` to
+`dist` and `src`, and check with `npm pack --dry-run` before a release.
+
 ## Editing a PR
 
 `gh pr edit` (gh 2.71) exits 1 with a Projects (classic) error and changes
