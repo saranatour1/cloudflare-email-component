@@ -554,6 +554,12 @@ publishing, so no npm token is stored anywhere. npm adds a provenance badge
 linking each version to the commit it was built from. `pnpm alpha` does the same
 for a prerelease under the `alpha` tag.
 
+The workflow also creates a GitHub Release from the version's changelog section,
+and mirrors the package to GitHub Packages as
+`@saranatour1/cloudflare-email-component`, so both show on the repository page.
+Install from npm as usual: the mirror needs a GitHub token to install. To add
+them for an existing tag, run the Publish workflow by hand with that tag.
+
 ## References
 
 Cloudflare:

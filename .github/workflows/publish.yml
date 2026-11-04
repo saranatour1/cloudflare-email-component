@@ -3,16 +3,29 @@ name: Publish
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description:
+          An existing tag to release on GitHub and mirror to GitHub Packages,
+          like v0.2.0
+        required: true
 
 permissions:
-  id-token: write
   contents: read
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
-  publish:
+  npm:
     name: Stage on npm
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -25,7 +38,7 @@ jobs:
 
       - name: Check the tag matches package.json
         run: |
-          test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+          test "v$(node -p 'require("./package.json").version')" = "$TAG"
 
       - name: Build and check
         run: |
@@ -39,6 +52,64 @@ jobs:
 
       - name: Stage on npm
         env:
-          TAG: ${{ contains(github.ref_name, '-') && 'alpha' || 'latest' }}
+          DIST_TAG: ${{ contains(github.ref_name, '-') && 'alpha' || 'latest' }}
         run: |
-          npm stage publish --tag "$TAG"
+          npm stage publish --tag "$DIST_TAG"
+
+  release:
+    name: GitHub Release
+    needs: npm
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Release with the version's CHANGELOG.md section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          awk -v h="## $version" '$0==h{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          echo "npm: https://www.npmjs.com/package/@sarant/cloudflare-email-component/v/$version" >> notes.md
+          flags=(--title "$TAG" --notes-file notes.md --verify-tag)
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+          gh release create "$TAG" "${flags[@]}"
+
+  github-packages:
+    name: Mirror to GitHub Packages
+    needs: npm
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Vite+ setup
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: false
+
+      - name: Build
+        run: vp run build
+
+      - name: Publish as @saranatour1/cloudflare-email-component
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          DIST_TAG: ${{ contains(env.TAG, '-') && 'alpha' || 'latest' }}
+        run: |
+          npm pkg set name=@saranatour1/cloudflare-email-component publishConfig.registry=https://npm.pkg.github.com
+          echo "//npm.pkg.github.com/:_authToken=$NODE_AUTH_TOKEN" > .npmrc
+          npm publish --ignore-scripts --tag "$DIST_TAG"
