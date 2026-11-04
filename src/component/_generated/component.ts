@@ -27,34 +27,61 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       list: FunctionReference<
         "query",
         "internal",
-        { emailId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          at: number;
-          eventId: string;
-          messageId: string;
-          owner: string;
-          payload: string;
-          status:
-            | "delivered"
-            | "deferred"
-            | "bounced"
-            | "failed"
-            | "rejected"
-            | "complained";
-          terminal: boolean;
-        }>,
+        {
+          emailId: string;
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+        },
+        {
+          continueCursor: string;
+          isDone: boolean;
+          page: Array<{
+            _creationTime: number;
+            _id: string;
+            at: number;
+            eventId: string;
+            messageId: string;
+            owner: string;
+            payload: string;
+            status:
+              | "delivered"
+              | "deferred"
+              | "bounced"
+              | "failed"
+              | "rejected"
+              | "complained";
+            terminal: boolean;
+          }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
+        },
         Name
       >;
       page: FunctionReference<
         "query",
         "internal",
-        { cursor: string | null },
+        {
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+        },
         {
           continueCursor: string;
           isDone: boolean;
           page: Array<{ _id: string; owner: string; payload: string }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
         },
         Name
       >;
@@ -116,24 +143,41 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       list: FunctionReference<
         "query",
         "internal",
-        { direction: "inbound" | "outbound"; limit?: number; owner: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          delivery?:
-            | "delivered"
-            | "deferred"
-            | "bounced"
-            | "failed"
-            | "rejected"
-            | "complained";
+        {
           direction: "inbound" | "outbound";
-          error?: string;
-          messageId?: string;
           owner: string;
-          payload: string;
-          status: "queued" | "sent" | "failed" | "received";
-        }>,
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+        },
+        {
+          continueCursor: string;
+          isDone: boolean;
+          page: Array<{
+            _creationTime: number;
+            _id: string;
+            delivery?:
+              | "delivered"
+              | "deferred"
+              | "bounced"
+              | "failed"
+              | "rejected"
+              | "complained";
+            direction: "inbound" | "outbound";
+            error?: string;
+            messageId?: string;
+            owner: string;
+            payload: string;
+            status: "queued" | "sent" | "failed" | "received";
+          }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
+        },
         Name
       >;
       markResult: FunctionReference<
@@ -152,7 +196,16 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       page: FunctionReference<
         "query",
         "internal",
-        { cursor: string | null },
+        {
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+        },
         {
           continueCursor: string;
           isDone: boolean;
@@ -162,6 +215,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             owner: string;
             payload: string;
           }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
         },
         Name
       >;
@@ -204,8 +259,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "action",
         "internal",
         {
-          accountId: string;
-          apiToken: string;
+          accountId?: string;
+          apiToken?: string;
           email: {
             attachments?: Array<
               | {
@@ -250,6 +305,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           queued?: Array<string>;
           suppressed?: Array<string>;
         },
+        Name
+      >;
+      setHandlers: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          onEvents?: import("convex/server").FunctionHandle_future<
+            "action",
+            { events: Array<any> },
+            null
+          >;
+          onReceive?: import("convex/server").FunctionHandle_future<
+            "action",
+            { envelopeFrom?: string; envelopeTo?: string; raw: ArrayBuffer },
+            "accept" | "reject"
+          >;
+        },
+        null,
         Name
       >;
     };

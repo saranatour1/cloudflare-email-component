@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as deliveryEvents from "../deliveryEvents.js";
 import type * as events from "../events.js";
+import type * as http from "../http.js";
 import type * as lib from "../lib.js";
 import type * as send from "../send.js";
 
@@ -20,7 +22,9 @@ import type {
 import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
+  deliveryEvents: typeof deliveryEvents;
   events: typeof events;
+  http: typeof http;
   lib: typeof lib;
   send: typeof send;
 }> = anyApi as any;

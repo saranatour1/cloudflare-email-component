@@ -47,6 +47,25 @@ export const vDelivery = v.union(
   v.literal("complained"),
 );
 
+/** Takes the raw MIME the inbound Worker posts. "reject" turns the message away. */
+export const vReceiveHandler = v.function({
+  fnType: "action",
+  args: {
+    raw: v.bytes(),
+    envelopeFrom: v.optional(v.string()),
+    envelopeTo: v.optional(v.string()),
+  },
+  returns: v.union(v.literal("accept"), v.literal("reject")),
+});
+
+/** Takes a batch of delivery events. Queues can deliver one twice. */
+export const vEventsHandler = v.function({
+  fnType: "action",
+  // Cloudflare may add fields, so these aren't checked beyond `parseDeliveryEvents`.
+  args: { events: v.array(v.any()) },
+  returns: v.null(),
+});
+
 export default defineSchema({
   emails: defineTable({
     owner: v.string(),
@@ -75,4 +94,9 @@ export default defineSchema({
   })
     .index("by_owner_and_eventId", ["owner", "eventId"])
     .index("by_owner_and_messageId", ["owner", "messageId"]),
+  // One document: where the HTTP routes hand off what they're sent.
+  handlers: defineTable({
+    onReceive: v.optional(vReceiveHandler),
+    onEvents: v.optional(vEventsHandler),
+  }),
 });

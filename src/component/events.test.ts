@@ -41,6 +41,12 @@ const statusOf = async (
   emailId: Awaited<ReturnType<typeof sentEmail>>,
 ) => (await t.query(api.lib.get, { emailId }))?.delivery;
 
+const all = { numItems: 100, cursor: null };
+const eventsOf = async (
+  t: ReturnType<typeof initConvexTest>,
+  emailId: Awaited<ReturnType<typeof sentEmail>>,
+) => (await t.query(api.events.list, { emailId, paginationOpts: all })).page;
+
 describe("events", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -66,7 +72,7 @@ describe("events", () => {
       events,
     });
     expect(again?.isNew).toBe(false);
-    expect(await t.query(api.events.list, { emailId })).toHaveLength(1);
+    expect(await eventsOf(t, emailId)).toHaveLength(1);
   });
 
   test.each([
@@ -102,7 +108,7 @@ describe("events", () => {
     });
     expect(result?.emailId).toBeUndefined();
     expect(await statusOf(t, emailId)).toBeUndefined();
-    expect(await t.query(api.events.list, { emailId })).toEqual([]);
+    expect(await eventsOf(t, emailId)).toEqual([]);
   });
 
   test("the same event id from two owners is two events", async () => {
@@ -128,11 +134,11 @@ describe("events", () => {
     });
     const emailId = await sentEmail(t);
     expect(await statusOf(t, emailId)).toBe("bounced");
-    expect(await t.query(api.events.list, { emailId })).toHaveLength(1);
+    expect(await eventsOf(t, emailId)).toHaveLength(1);
 
     // Its scheduled clean-up finds the email now, so the event stays.
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await t.query(api.events.list, { emailId })).toHaveLength(1);
+    expect(await eventsOf(t, emailId)).toHaveLength(1);
   });
 
   test("an event for mail the component never saw is dropped later", async () => {
@@ -141,10 +147,10 @@ describe("events", () => {
       owner: "me",
       events: [event("e1", "delivered", "someone-else@b")],
     });
-    const before = await t.query(api.events.page, { cursor: null });
+    const before = await t.query(api.events.page, { paginationOpts: all });
     expect(before.page).toHaveLength(1);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    const after = await t.query(api.events.page, { cursor: null });
+    const after = await t.query(api.events.page, { paginationOpts: all });
     expect(after.page).toEqual([]);
   });
 
@@ -154,7 +160,7 @@ describe("events", () => {
       owner: "me",
       payload: "x",
     });
-    expect(await t.query(api.events.list, { emailId })).toEqual([]);
+    expect(await eventsOf(t, emailId)).toEqual([]);
   });
 
   test("deleting an email takes its events along", async () => {
@@ -166,9 +172,9 @@ describe("events", () => {
       events: [event("e1", "delivered"), event("e2", "delivered", "other@b")],
     });
     await t.mutation(api.lib.remove, { emailId, owner: "me" });
-    const { page } = await t.query(api.events.page, { cursor: null });
+    const { page } = await t.query(api.events.page, { paginationOpts: all });
     expect(page).toHaveLength(1);
-    expect(await t.query(api.events.list, { emailId: other })).toHaveLength(1);
+    expect(await eventsOf(t, other)).toHaveLength(1);
   });
 
   test("removeOwner clears events, including across batches", async () => {
@@ -187,7 +193,7 @@ describe("events", () => {
       await t.mutation(api.lib.removeOwner, { owner: "me", limit: 1 }),
     ).toBe(true);
     expect(await t.mutation(api.lib.removeOwner, { owner: "me" })).toBe(false);
-    const { page } = await t.query(api.events.page, { cursor: null });
+    const { page } = await t.query(api.events.page, { paginationOpts: all });
     expect(page.map((e) => e.owner)).toEqual(["them"]);
   });
 
@@ -197,7 +203,7 @@ describe("events", () => {
       owner: "me",
       events: [event("e1", "delivered")],
     });
-    const { page } = await t.query(api.events.page, { cursor: null });
+    const { page } = await t.query(api.events.page, { paginationOpts: all });
     const id = page[0]!._id;
     await t.mutation(api.events.reseal, { id, from: "stale", payload: "new" });
     await t.mutation(api.events.reseal, {
@@ -205,7 +211,7 @@ describe("events", () => {
       from: "sealed",
       payload: "newer",
     });
-    const after = await t.query(api.events.page, { cursor: null });
+    const after = await t.query(api.events.page, { paginationOpts: all });
     expect(after.page[0]?.payload).toBe("newer");
   });
 });

@@ -1,5 +1,9 @@
 // What happens to mail after Cloudflare accepts it, from its event subscriptions. Like
 // emails, an event's payload is opaque: it holds addresses and subjects, so the app seals it.
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
 import { type Infer, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalMutation, mutation, query } from "./_generated/server.js";
@@ -143,42 +147,38 @@ export const dropUnmatched = internalMutation({
 });
 
 export const list = query({
-  args: { emailId: v.id("emails") },
-  returns: v.array(schema.doc("deliveryEvents")),
-  handler: async (ctx, { emailId }) => {
+  args: { emailId: v.id("emails"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(schema.doc("deliveryEvents")),
+  handler: async (ctx, { emailId, paginationOpts }) => {
     const email = await ctx.db.get("emails", emailId);
     const messageId = email?.messageId;
-    if (!email || !messageId) return [];
+    if (!email || !messageId)
+      return { page: [], isDone: true, continueCursor: "" };
     return await ctx.db
       .query("deliveryEvents")
       .withIndex("by_owner_and_messageId", (q) =>
         q.eq("owner", email.owner).eq("messageId", messageId),
       )
-      .take(500);
+      .paginate(paginationOpts);
   },
 });
 
 /** With `reseal`, for re-encrypting payloads, the same as `lib.page` for emails. */
 export const page = query({
-  args: { cursor: v.union(v.string(), v.null()) },
-  returns: v.object({
-    page: v.array(
-      v.object({
-        _id: v.id("deliveryEvents"),
-        owner: v.string(),
-        payload: v.string(),
-      }),
-    ),
-    isDone: v.boolean(),
-    continueCursor: v.string(),
-  }),
-  handler: async (ctx, { cursor }) => {
+  args: { paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(
+    v.object({
+      _id: v.id("deliveryEvents"),
+      owner: v.string(),
+      payload: v.string(),
+    }),
+  ),
+  handler: async (ctx, { paginationOpts }) => {
     const result = await ctx.db
       .query("deliveryEvents")
-      .paginate({ cursor, numItems: 100 });
+      .paginate(paginationOpts);
     return {
-      isDone: result.isDone,
-      continueCursor: result.continueCursor,
+      ...result,
       page: result.page.map(({ _id, owner, payload }) => ({
         _id,
         owner,

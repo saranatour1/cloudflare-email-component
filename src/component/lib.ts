@@ -1,16 +1,22 @@
 // The component stores only opaque payloads, and the message and token reach send()
 // as arguments from an action. Scheduled functions keep their arguments, so nothing
 // here schedules with a token or a message.
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import {
   action,
+  env,
   internalMutation,
+  internalQuery,
   mutation,
   query,
 } from "./_generated/server.js";
 import { deliveryOf, messageIdKey, removeEventsOf } from "./events.js";
-import schema, { vEmail } from "./schema.js";
+import schema, { vEmail, vEventsHandler, vReceiveHandler } from "./schema.js";
 import { sendThroughCloudflare } from "./send.js";
 
 const emailDoc = schema.doc("emails");
@@ -47,9 +53,16 @@ export const expire = internalMutation({
   },
 });
 
-/** Prefer the client's `sendEmail`, which sends from the app's own action. */
+/**
+ * Prefer the client's `sendEmail`. Without `accountId` and `apiToken`, it uses what the app
+ * bound in `app.use(cloudflareEmail, { env })`.
+ */
 export const send = action({
-  args: { accountId: v.string(), apiToken: v.string(), email: vEmail },
+  args: {
+    accountId: v.optional(v.string()),
+    apiToken: v.optional(v.string()),
+    email: vEmail,
+  },
   returns: v.object({
     messageId: v.optional(v.string()),
     error: v.optional(v.string()),
@@ -58,7 +71,20 @@ export const send = action({
     permanentBounces: v.optional(v.array(v.string())),
     suppressed: v.optional(v.array(v.string())),
   }),
-  handler: (_ctx, args) => sendThroughCloudflare(args),
+  handler: async (
+    _ctx,
+    {
+      accountId = env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken = env.CLOUDFLARE_API_TOKEN,
+      email,
+    },
+  ) =>
+    accountId && apiToken
+      ? await sendThroughCloudflare({ accountId, apiToken, email })
+      : {
+          error:
+            "Pass accountId and apiToken, or bind CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in app.use",
+        },
 });
 
 export const markResult = mutation({
@@ -106,40 +132,37 @@ export const get = query({
 });
 
 export const list = query({
-  args: { owner: v.string(), direction, limit: v.optional(v.number()) },
-  returns: v.array(emailDoc),
-  handler: (ctx, { owner, direction, limit }) =>
+  args: {
+    owner: v.string(),
+    direction,
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(emailDoc),
+  handler: (ctx, { owner, direction, paginationOpts }) =>
     ctx.db
       .query("emails")
       .withIndex("by_owner_and_direction", (q) =>
         q.eq("owner", owner).eq("direction", direction),
       )
       .order("desc")
-      .take(Math.min(limit ?? 50, 500)),
+      .paginate(paginationOpts),
 });
 
 export const page = query({
-  args: { cursor: v.union(v.string(), v.null()) },
-  returns: v.object({
-    page: v.array(
-      v.object({
-        _id: v.id("emails"),
-        owner: v.string(),
-        payload: v.string(),
-        error: v.optional(v.string()),
-      }),
-    ),
-    isDone: v.boolean(),
-    continueCursor: v.string(),
-  }),
-  handler: async (ctx, { cursor }) => {
-    const result = await ctx.db
-      .query("emails")
-      .paginate({ cursor, numItems: 100 });
+  args: { paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(
+    v.object({
+      _id: v.id("emails"),
+      owner: v.string(),
+      payload: v.string(),
+      error: v.optional(v.string()),
+    }),
+  ),
+  handler: async (ctx, { paginationOpts }) => {
+    const result = await ctx.db.query("emails").paginate(paginationOpts);
     // Named, since a page also carries fields this doesn't return.
     return {
-      isDone: result.isDone,
-      continueCursor: result.continueCursor,
+      ...result,
       page: result.page.map(({ _id, owner, payload, error }) => ({
         _id,
         owner,
@@ -196,4 +219,25 @@ export const removeOwner = mutation({
       await ctx.db.delete("deliveryEvents", event._id);
     return emails.length > limit || events.length > limit;
   },
+});
+
+/** Points the HTTP routes at the app's functions. Leaves out what isn't passed. */
+export const setHandlers = mutation({
+  args: {
+    onReceive: v.optional(vReceiveHandler),
+    onEvents: v.optional(vEventsHandler),
+  },
+  returns: v.null(),
+  handler: async (ctx, handlers) => {
+    const current = await ctx.db.query("handlers").first();
+    if (current) await ctx.db.patch("handlers", current._id, handlers);
+    else await ctx.db.insert("handlers", handlers);
+    return null;
+  },
+});
+
+export const handlers = internalQuery({
+  args: {},
+  returns: v.union(v.null(), schema.doc("handlers")),
+  handler: (ctx) => ctx.db.query("handlers").first(),
 });

@@ -2,19 +2,30 @@ import type { GenericActionCtx, GenericDataModel } from "convex/server";
 import type { Infer } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
 import { vEmail } from "../component/schema.js";
+import { type DeliveryEvent, statuses } from "../component/deliveryEvents.js";
 import { sendThroughCloudflare } from "../component/send.js";
 
 export * from "./cloudflare.js";
 export { vEmail };
+export {
+  type DeliveryEvent,
+  parseDeliveryEvents,
+} from "../component/deliveryEvents.js";
 
 export type Email = Infer<typeof vEmail>;
 
-type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
+type RunMutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
+type ActionCtx = Pick<
+  GenericActionCtx<GenericDataModel>,
+  "runMutation" | "runAction"
+>;
 
 /**
  * Queues, sends and records one email. `seal` turns what gets stored into the
  * opaque string the component keeps, so encrypt there, or pass `(text) => text`
  * to store it as plain text. It sees the email and any error, never the token.
+ * Leave out `accountId` and `apiToken` to use the ones bound in `app.use`, which
+ * caps the email at a function argument's 16 MiB instead of Cloudflare's 25 MiB.
  * A send that dies midway is marked failed by the component 15 minutes later.
  */
 export async function sendEmail(
@@ -22,8 +33,8 @@ export async function sendEmail(
   component: ComponentApi,
   args: {
     owner: string;
-    accountId: string;
-    apiToken: string;
+    accountId?: string;
+    apiToken?: string;
     email: Email;
     seal: (text: string) => string | Promise<string>;
   },
@@ -34,9 +45,12 @@ export async function sendEmail(
     // Attachments stay out, they'd run into the document size limit.
     payload: await seal(JSON.stringify({ ...email, attachments: [] })),
   });
-  // Right here, not through `lib.send`: a component call caps its arguments at
-  // 16 MiB, under Cloudflare's 25 MiB, and the token stays in the app's action.
-  const result = await sendThroughCloudflare({ accountId, apiToken, email });
+  // Right here when it can be: a component call caps its arguments at 16 MiB,
+  // under Cloudflare's 25 MiB.
+  const result =
+    accountId && apiToken
+      ? await sendThroughCloudflare({ accountId, apiToken, email })
+      : await ctx.runAction(component.lib.send, { email });
   const { error } = result;
   await ctx.runMutation(component.lib.markResult, {
     emailId,
@@ -46,50 +60,6 @@ export async function sendEmail(
   });
   return { emailId, ...result };
 }
-
-const statuses = {
-  "cf.email.sending.message.delivered": "delivered",
-  "cf.email.sending.message.deferred": "deferred",
-  "cf.email.sending.message.bounced": "bounced",
-  "cf.email.sending.message.failed": "failed",
-  "cf.email.sending.message.rejected": "rejected",
-  "cf.email.sending.message.complained": "complained",
-} as const;
-
-/** What Cloudflare publishes for one recipient of one email. */
-export type DeliveryEvent = {
-  type: keyof typeof statuses;
-  source?: { zoneId?: string; domain?: string };
-  payload: {
-    eventId: string;
-    messageId: string;
-    recipient: string;
-    sender?: string;
-    subject?: string;
-    terminal?: boolean;
-    delivery?: { status?: string; smtpResponse?: string };
-    bounce?: { type?: "hard" | "soft"; reason?: string };
-    failure?: { reason?: string };
-    rejection?: { reason?: string; detail?: string };
-    complaint?: { type?: string };
-  };
-  metadata?: { eventTimestamp?: string };
-};
-
-const isDeliveryEvent = (event: unknown): event is DeliveryEvent => {
-  const { type, payload } = (event ?? {}) as Partial<DeliveryEvent>;
-  return (
-    typeof type === "string" &&
-    type in statuses &&
-    typeof payload?.eventId === "string" &&
-    typeof payload.messageId === "string" &&
-    typeof payload.recipient === "string"
-  );
-};
-
-/** The events in a Worker's post. Anything else is left out, as Cloudflare may add new kinds. */
-export const parseDeliveryEvents = (body: unknown[]) =>
-  body.filter(isDeliveryEvent);
 
 /** Cloudflare's advice for when to stop mailing an address: a complaint or a hard bounce. */
 export const isUndeliverable = ({ type, payload }: DeliveryEvent) =>
@@ -103,7 +73,7 @@ export const isUndeliverable = ({ type, payload }: DeliveryEvent) =>
  * payload, which holds the recipient and subject.
  */
 export async function recordDeliveryEvents(
-  ctx: ActionCtx,
+  ctx: RunMutationCtx,
   component: ComponentApi,
   args: {
     owner: string;

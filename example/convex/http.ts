@@ -1,76 +1,54 @@
 import { httpRouter } from "convex/server";
-import {
-  isUndeliverable,
-  parseDeliveryEvents,
-  recordDeliveryEvents,
-  sha256,
-} from "@saranatour1/cloudflare-email-component";
-import { components } from "./_generated/api.js";
-import { env, httpAction } from "./_generated/server.js";
+import { internal } from "./_generated/api.js";
+import { httpAction } from "./_generated/server.js";
+import { inboxPage } from "./inboxPage.js";
 
-const authorized = async (req: Request, secret: string | undefined) => {
-  const bearer = req.headers.get("Authorization")?.replace(/^Bearer /, "");
-  return (
-    !!secret && !!bearer && (await sha256(bearer)) === (await sha256(secret))
-  );
-};
-
+// /email/inbound and /email/events are the component's, mounted in convex.config.ts.
 const http = httpRouter();
-const maxPayloadBytes = 900 * 1024;
 
-// Called by the Worker from `uploadWorker`. A 403 turns the message away; any
-// other failure makes Cloudflare try again later.
+// shortcut: no sign-in, so anyone with this deployment's URL can read this mail and
+// reply as your domain. Put your own auth in front of these routes before real use.
 http.route({
-  path: "/email/inbound",
-  method: "POST",
-  handler: httpAction(async (ctx, req) => {
-    if (!(await authorized(req, env.INBOUND_SECRET)))
-      return new Response("Unauthorized", { status: 401 });
-    // shortcut: the raw message as plain text. Parse and encrypt real mail, with
-    // something like postal-mime, and put large parts in `ctx.storage`.
-    const payload = JSON.stringify({
-      from: req.headers.get("X-Envelope-From"),
-      to: req.headers.get("X-Envelope-To"),
-      raw: await req.text(),
+  path: "/inbox",
+  method: "GET",
+  handler: httpAction(async () => {
+    const nonce = crypto.randomUUID();
+    return new Response(inboxPage(nonce), {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        // Mail is written by strangers. The page only shows it as text, and this
+        // stops anything that gets past that from running or calling out.
+        "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+      },
     });
-    // A failure here would have Cloudflare retry a message that can never fit in
-    // a document, so turn it away.
-    if (new TextEncoder().encode(payload).length > maxPayloadBytes)
-      return new Response("Message too large", { status: 403 });
-    await ctx.runMutation(components.cloudflareEmail.lib.receive, {
-      owner: "example",
-      payload,
-    });
-    return new Response(null, { status: 204 });
   }),
 });
 
-// Called by the Worker from `setUpDeliveryEvents`. Any failure makes Queues retry the
-// batch, so this has to be safe to run twice, which `isNew` takes care of.
 http.route({
-  path: "/email/events",
+  path: "/inbox/threads",
+  method: "GET",
+  handler: httpAction(async (ctx) =>
+    Response.json(await ctx.runAction(internal.inbox.threads, {}), {
+      headers: { "Cache-Control": "no-store" },
+    }),
+  ),
+});
+
+http.route({
+  path: "/inbox/reply",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
-    if (!(await authorized(req, env.EVENTS_SECRET)))
-      return new Response("Unauthorized", { status: 401 });
-    const body: unknown = await req.json().catch(() => null);
-    if (!Array.isArray(body))
-      return new Response("Expected a list of events", { status: 400 });
-    const results = await recordDeliveryEvents(
-      ctx,
-      components.cloudflareEmail,
-      {
-        owner: "example",
-        events: parseDeliveryEvents(body),
-        // shortcut: stored as plain text, encrypt here before keeping real mail.
-        seal: (text) => text,
-      },
+    const body = (await req.json().catch(() => null)) as {
+      emailId?: unknown;
+      text?: unknown;
+    } | null;
+    const { emailId, text } = body ?? {};
+    if (typeof emailId !== "string" || typeof text !== "string" || !text.trim())
+      return new Response("Expected an emailId and some text", { status: 400 });
+    return Response.json(
+      await ctx.runAction(internal.inbox.reply, { emailId, text }),
     );
-    for (const { event, isNew } of results)
-      // Take event.payload.recipient off your own mailing lists here.
-      if (isNew && isUndeliverable(event))
-        console.log(`Stop mailing, from event ${event.payload.eventId}`);
-    return new Response(null, { status: 204 });
   }),
 });
 
