@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Test files no longer ship in the package. One of them used `new Function`,
+  which security scanners such as Socket flag as eval. The package drops from 82
+  to 75 files.
+
 ## 0.2.0
 
 Breaking:
