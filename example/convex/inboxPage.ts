@@ -60,6 +60,8 @@ textarea {
 #send:disabled { opacity: .6; cursor: default; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .empty { color: var(--muted); padding: 16px; }
+.events { list-style: none; margin: 12px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--line); font-size: 13px; }
+.events li { margin-bottom: 6px; overflow-wrap: anywhere; }
 @media (max-width: 800px) {
   body { display: flex; flex-direction: column; height: auto; min-height: 100dvh; }
   nav, #threads { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -93,6 +95,8 @@ const el = (tag, className, text) => {
 const when = (at) => new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 const idOf = (thread) => thread[0].id;
 const person = (m) => m.direction === "inbound" ? m.fromName || m.from : m.to.join(", ");
+const isBad = (status) => ["failed", "bounced", "rejected", "complained"].includes(status);
+const statusTag = (status) => el("span", isBad(status) ? "status bad" : "status", status);
 const rowButton = (selected, pick) => {
   const button = el("button", "row");
   button.type = "button";
@@ -105,10 +109,17 @@ let threads = [];
 let inbox = null;
 let open = null;
 let last = "";
+let loaded = false;
 
 function render() {
+  if (!loaded) {
+    $("threads").replaceChildren(el("p", "empty", "Loading…"));
+    $("messages").replaceChildren();
+    return;
+  }
   const addresses = [...new Set(threads.flatMap((t) => t.map((m) => m.inbox)))].sort();
   const shown = threads.filter((t) => !inbox || t.some((m) => m.inbox === inbox));
+  if (!shown.some((t) => idOf(t) === open)) open = shown[0] ? idOf(shown[0]) : null;
   const count = (address) => threads.filter((t) => t.some((m) => m.inbox === address)).length;
   $("inboxes").replaceChildren(
     ...[null, ...addresses].map((address) => {
@@ -141,14 +152,24 @@ function render() {
     ...thread.map((m) => {
       const article = el("article", m.direction);
       const meta = el("div", "meta", m.from + " to " + m.to.join(", ") + " · " + when(m.at));
-      if (m.status) {
-        const bad = ["failed", "bounced", "rejected", "complained"].includes(m.status);
-        meta.append(" · ", el("span", bad ? "status bad" : "status", m.status));
-      }
+      if (m.status) meta.append(" · ", statusTag(m.status));
       article.append(meta);
       if (m.error) article.append(el("p", "bad", m.error));
       article.append(el("div", "body", m.text));
       if (m.attachments?.length) article.append(el("p", "note", "Attachments not kept: " + m.attachments.join(", ")));
+      if (m.events?.length) {
+        const list = el("ul", "events");
+        list.setAttribute("aria-label", "Delivery history");
+        for (const e of m.events) {
+          const item = el("li");
+          item.append(statusTag(e.status), " " + [e.recipient, when(e.at)].filter(Boolean).join(" · "));
+          if (e.detail) item.append(el("div", "note", e.detail));
+          list.append(item);
+        }
+        article.append(list);
+      } else if (m.direction === "outbound" && m.messageId) {
+        article.append(el("p", "note", "No delivery events yet."));
+      }
       return article;
     }),
   );
@@ -164,9 +185,11 @@ async function load() {
     if (body === last) return;
     last = body;
     threads = JSON.parse(body);
+    loaded = true;
     render();
   } catch (e) {
-    $("result").textContent = "Couldn't refresh: " + e.message;
+    if (!loaded) $("threads").replaceChildren(el("p", "empty bad", "Couldn't load mail: " + e.message));
+    else $("result").textContent = "Couldn't refresh: " + e.message;
   }
 }
 

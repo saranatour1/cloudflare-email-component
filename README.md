@@ -31,7 +31,6 @@ See the
 [changelog](https://github.com/saranatour1/cloudflare-email-component/blob/main/CHANGELOG.md)
 for what changed in each version.
 
-
 ## Pick what you need
 
 | Use               | You set up                                                  | The API token also needs to manage           |
@@ -479,7 +478,7 @@ What this component chooses, and what that costs you:
   `@convex-dev/workpool`, and accept that a rare email may go out twice.
 - **Attachments aren't stored.** They'd quickly exceed the 1 MiB document limit.
   Keep files in Convex file storage and attach them at send time.
-  
+
 ## Testing
 
 ```ts

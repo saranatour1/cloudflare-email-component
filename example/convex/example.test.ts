@@ -158,6 +158,12 @@ describe("example", () => {
     ).toHaveLength(1);
     const [sent] = await listOf(t, "outbound");
     expect(sent.delivery).toBe("bounced");
+    const [[shown]] = await (await t.fetch("/inbox/threads")).json();
+    expect(shown.status).toBe("bounced");
+    expect(shown.events).toMatchObject([
+      { status: "delivered", recipient: "you@example.com" },
+      { status: "bounced", recipient: "you@example.com" },
+    ]);
     log.mockRestore();
   });
 

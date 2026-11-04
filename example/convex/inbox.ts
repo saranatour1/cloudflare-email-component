@@ -148,9 +148,37 @@ export const threads = internalAction({
       newest("inbound"),
       newest("outbound"),
     ]);
-    const messages = [...inbound, ...outbound]
-      .map(toMessage)
-      .sort((a, b) => a.at - b.at);
+    // shortcut: one query per sent email, fine for 50, keep a summary per email past that.
+    const historyOf = async (emailId: string) =>
+      (
+        await ctx.runQuery(components.cloudflareEmail.events.list, {
+          emailId,
+          paginationOpts: { numItems: 20, cursor: null },
+        })
+      ).page
+        .map(({ status, at, payload }) => {
+          const event = JSON.parse(payload) as {
+            recipient?: string;
+            delivery?: { smtpResponse?: string };
+            bounce?: { reason?: string };
+          };
+          return {
+            status,
+            at,
+            recipient: event.recipient,
+            detail: event.bounce?.reason ?? event.delivery?.smtpResponse,
+          };
+        })
+        .sort((a, b) => a.at - b.at);
+    const sent = await Promise.all(
+      outbound.map(async (email) => ({
+        ...toMessage(email),
+        events: email.messageId ? await historyOf(email._id) : [],
+      })),
+    );
+    const messages = [...inbound.map(toMessage), ...sent].sort(
+      (a, b) => a.at - b.at,
+    );
     const byRoot = new Map<string, typeof messages>();
     for (const message of messages) {
       // Every reply names the message that started its thread first.
