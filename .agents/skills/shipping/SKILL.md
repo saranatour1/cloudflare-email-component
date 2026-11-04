@@ -19,17 +19,22 @@ through `pkg-pr-new`, which is the way to try a change in another app before
 release.
 
 The release is `pnpm release` (patch), `pnpm release:minor` or `pnpm alpha`
-(prerelease). Each checks the npm login, runs `preversion` (clean build, tests,
-lint, typecheck), bumps the version, renames `## Unreleased` in `CHANGELOG.md`
-to the new version (`scripts/changelog.mjs` refuses an empty section), commits,
-tags, publishes and pushes. npm stages the publish: the user approves it under
+(prerelease). Each runs `preversion` (clean build, tests, lint, typecheck),
+bumps the version, renames `## Unreleased` in `CHANGELOG.md` to the new version
+(`scripts/changelog.mjs` refuses an empty section), commits, tags and pushes.
+The `v*` tag runs `.github/workflows/publish.yml`, which stages the version on
+npm through trusted publishing (OIDC, no token). The user approves it under
 Staged Packages on npmjs.com. So:
 
 - Add every user-facing change under `## Unreleased` in `CHANGELOG.md` as part
   of the PR that makes it.
-- Leave releasing to the user. It needs their npm login and 2FA approval, and a
-  published version can't be reused, even after an unpublish.
+- Leave releasing to the user. It pushes a tag to `main` and needs their 2FA
+  approval on npm, and a published version can't be reused, even after an
+  unpublish.
 - A breaking change needs `pnpm release:minor` (or `major`), not `pnpm release`.
+- Don't run `pnpm publish` locally as well: the workflow publishes the tag.
+- The tag must match `version` in `package.json`, and `repository.url` must
+  match the GitHub repo exactly, or trusted publishing refuses the publish.
 
 ## The public API
 
