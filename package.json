@@ -1,5 +1,5 @@
 {
-  "name": "@saranatour1/cloudflare-email-component",
+  "name": "@sarant/cloudflare-email-component",
   "description": "Send and store email through Cloudflare from Convex.",
   "repository": "github:saranatour1/cloudflare-email-component",
   "homepage": "https://github.com/saranatour1/cloudflare-email-component#readme",
@@ -8,6 +8,9 @@
   },
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "convex",
     "component"

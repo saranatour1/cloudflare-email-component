@@ -2,7 +2,7 @@
 import { test } from "vite-plus/test";
 import { convexTest } from "convex-test";
 import schema from "./schema.js";
-import component from "@saranatour1/cloudflare-email-component/test";
+import component from "@sarant/cloudflare-email-component/test";
 
 const modules = import.meta.glob("./**/*.*s");
 // When users want to write tests that use your component, they need to

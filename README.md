@@ -25,14 +25,14 @@ Found a bug? Feature request?
 ## Installation
 
 ```sh
-pnpm add @saranatour1/cloudflare-email-component
+pnpm add @sarant/cloudflare-email-component
 ```
 
 ```ts
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
-import cloudflareEmail from "@saranatour1/cloudflare-email-component/convex.config.js";
+import cloudflareEmail from "@sarant/cloudflare-email-component/convex.config.js";
 
 const app = defineApp({
   env: {
@@ -69,7 +69,7 @@ lists every function.
 `{ emailId, messageId, error }` rather than throwing when Cloudflare refuses.
 
 ```ts
-import { sendEmail, vEmail } from "@saranatour1/cloudflare-email-component";
+import { sendEmail, vEmail } from "@sarant/cloudflare-email-component";
 import { components } from "./_generated/api";
 import { action } from "./_generated/server";
 
@@ -182,7 +182,7 @@ Cloudflare adds bounces and spam complaints to the list itself. Add your own for
 unsubscribes, since it doesn't process unsubscribe links:
 
 ```ts
-import { addSuppression } from "@saranatour1/cloudflare-email-component";
+import { addSuppression } from "@sarant/cloudflare-email-component";
 
 await addSuppression(accountId, token, { email: "jane@example.net" });
 ```
@@ -200,7 +200,7 @@ same way inbound mail arrives. Set it up once for each sending domain, from one
 of your actions:
 
 ```ts
-import { setUpDeliveryEvents } from "@saranatour1/cloudflare-email-component";
+import { setUpDeliveryEvents } from "@sarant/cloudflare-email-component";
 
 // Keep the result for removeDeliveryEvents.
 const setup = await setUpDeliveryEvents(accountId, token, {
@@ -276,7 +276,7 @@ import {
   routingEnabled,
   ruleFor,
   uploadWorker,
-} from "@saranatour1/cloudflare-email-component";
+} from "@sarant/cloudflare-email-component";
 
 await uploadWorker(accountId, token, "my-inbound-worker", {
   inboundUrl: `${process.env.CONVEX_SITE_URL}/email/inbound`,
@@ -336,7 +336,7 @@ again later. See [inbox.ts](./example/convex/inbox.ts) for a whole handler.
 ## Testing
 
 ```ts
-import component from "@saranatour1/cloudflare-email-component/test";
+import component from "@sarant/cloudflare-email-component/test";
 
 const t = convexTest(schema, modules);
 component.register(t);

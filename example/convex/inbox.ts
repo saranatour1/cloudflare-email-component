@@ -6,7 +6,7 @@ import {
   routingEnabled,
   ruleFor,
   uploadWorker,
-} from "@saranatour1/cloudflare-email-component";
+} from "@sarant/cloudflare-email-component";
 import { components, internal } from "./_generated/api.js";
 import { env, internalAction } from "./_generated/server.js";
 import { deliver } from "./example.js";

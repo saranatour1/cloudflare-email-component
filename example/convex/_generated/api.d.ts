@@ -53,5 +53,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  cloudflareEmail: import("@saranatour1/cloudflare-email-component/_generated/component.js").ComponentApi<"cloudflareEmail">;
+  cloudflareEmail: import("@sarant/cloudflare-email-component/_generated/component.js").ComponentApi<"cloudflareEmail">;
 };

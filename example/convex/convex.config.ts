@@ -1,6 +1,6 @@
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
-import cloudflareEmail from "@saranatour1/cloudflare-email-component/convex.config.js";
+import cloudflareEmail from "@sarant/cloudflare-email-component/convex.config.js";
 
 const app = defineApp({
   env: {

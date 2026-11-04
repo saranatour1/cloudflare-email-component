@@ -1,19 +1,19 @@
 # API reference
 
-Rough reference for `@saranatour1/cloudflare-email-component`. The
+Rough reference for `@sarant/cloudflare-email-component`. The
 [README](../README.md) has the walkthrough, and this page lists every export.
 
 ## Install
 
 ```sh
-pnpm add @saranatour1/cloudflare-email-component
+pnpm add @sarant/cloudflare-email-component
 ```
 
 ```ts
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
-import cloudflareEmail from "@saranatour1/cloudflare-email-component/convex.config.js";
+import cloudflareEmail from "@sarant/cloudflare-email-component/convex.config.js";
 
 const app = defineApp({
   env: {
@@ -57,12 +57,12 @@ Queues and event subscriptions too.
 
 ## Package entry points
 
-| Import                                                            | What it is                              |
-| ----------------------------------------------------------------- | --------------------------------------- |
-| `@saranatour1/cloudflare-email-component`                         | Client helpers, run in your own actions |
-| `@saranatour1/cloudflare-email-component/convex.config.js`        | The component, for `app.use`            |
-| `@saranatour1/cloudflare-email-component/test`                    | `register(t)` for `convex-test`         |
-| `@saranatour1/cloudflare-email-component/_generated/component.js` | `ComponentApi` type                     |
+| Import                                                       | What it is                              |
+| ------------------------------------------------------------ | --------------------------------------- |
+| `@sarant/cloudflare-email-component`                         | Client helpers, run in your own actions |
+| `@sarant/cloudflare-email-component/convex.config.js`        | The component, for `app.use`            |
+| `@sarant/cloudflare-email-component/test`                    | `register(t)` for `convex-test`         |
+| `@sarant/cloudflare-email-component/_generated/component.js` | `ComponentApi` type                     |
 
 ## Concepts
 
@@ -365,7 +365,7 @@ Events that match no email are dropped after an hour.
 
 ```ts
 import { convexTest } from "convex-test";
-import component from "@saranatour1/cloudflare-email-component/test";
+import component from "@sarant/cloudflare-email-component/test";
 
 const t = convexTest(schema, modules);
 component.register(t);

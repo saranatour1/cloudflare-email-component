@@ -8,7 +8,7 @@ import {
   sendEmail,
   setUpDeliveryEvents,
   vEmail,
-} from "@saranatour1/cloudflare-email-component";
+} from "@sarant/cloudflare-email-component";
 import { components, internal } from "./_generated/api.js";
 import {
   type ActionCtx,
