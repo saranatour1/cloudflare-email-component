@@ -7,7 +7,6 @@ import {
   vi,
 } from "vite-plus/test";
 import {
-  accessOf,
   addSuppression,
   createRule,
   deleteSuppression,
@@ -17,12 +16,8 @@ import {
   setUpDeliveryEvents,
   removeInbound,
   ruleFor,
-  sha256,
-  toBase64,
-  tokenStatus,
   updateSuppression,
   uploadWorker,
-  zoneNamesOf,
 } from "./cloudflare.js";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -50,65 +45,6 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => vi.unstubAllGlobals());
-
-test("zoneNamesOf walks up from the domain, stopping before the TLD", () => {
-  expect(zoneNamesOf("Mail.Example.com")).toEqual([
-    "mail.example.com",
-    "example.com",
-  ]);
-});
-
-test("sha256 gives the known digest", async () => {
-  expect(await sha256("abc")).toBe(
-    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-  );
-});
-
-describe("tokenStatus", () => {
-  test("falls back to the user endpoint for a user token", async () => {
-    route({ "/user/tokens/verify": { status: "active" } });
-    expect(await tokenStatus("acc", "t")).toBe("active");
-  });
-  test("is invalid when neither endpoint knows the token", async () => {
-    route({});
-    expect(await tokenStatus("acc", "t")).toBe("invalid");
-  });
-  test("sends the token as a bearer", async () => {
-    route({ "/accounts/acc/tokens/verify": { status: "active" } });
-    await tokenStatus("acc", "t");
-    expect(
-      new Headers(fetchMock.mock.calls[0]![1]!.headers).get("Authorization"),
-    ).toBe("Bearer t");
-  });
-});
-
-describe("accessOf", () => {
-  test("finds the parent zone and a wildcard sending domain", async () => {
-    route({
-      "/zones?name=mail.example.com": [],
-      "/zones?name=example.com": [{ id: "z" }],
-      "/accounts/acc/workers/scripts": [],
-      "/zones/z/email/sending/subdomains": [
-        { name: "*.example.com", enabled: true },
-      ],
-    });
-    expect(await accessOf("acc", "t", "mail.example.com")).toEqual({
-      zoneId: "z",
-      access: { sending: true, workers: true, routing: false, zone: true },
-    });
-  });
-  test("reports no zone without asking about one", async () => {
-    route({});
-    const { zoneId, access } = await accessOf("acc", "t", "example.com");
-    expect(zoneId).toBeUndefined();
-    expect(access).toEqual({
-      sending: undefined,
-      workers: false,
-      routing: false,
-      zone: false,
-    });
-  });
-});
 
 describe("ruleFor", () => {
   const rule = (over: object) => ({
@@ -174,14 +110,6 @@ test("removeInbound deletes every rule and the Worker, skipping an empty rule id
     ["DELETE", "/zones/z/email/routing/rules/alias"],
     ["DELETE", "/accounts/acc/workers/scripts/w"],
   ]);
-});
-
-test("toBase64 handles more than one piece, and any byte", () => {
-  const bytes = Uint8Array.from({ length: 20000 }, (_, i) => i % 256);
-  const decoded = Uint8Array.from(atob(toBase64(bytes.buffer)), (c) =>
-    c.charCodeAt(0),
-  );
-  expect(decoded).toEqual(bytes);
 });
 
 describe("suppressions", () => {

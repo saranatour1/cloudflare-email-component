@@ -57,12 +57,13 @@ Queues and event subscriptions too.
 
 ## Package entry points
 
-| Import                                                       | What it is                              |
-| ------------------------------------------------------------ | --------------------------------------- |
-| `@sarant/cloudflare-email-component`                         | Client helpers, run in your own actions |
-| `@sarant/cloudflare-email-component/convex.config.js`        | The component, for `app.use`            |
-| `@sarant/cloudflare-email-component/test`                    | `register(t)` for `convex-test`         |
-| `@sarant/cloudflare-email-component/_generated/component.js` | `ComponentApi` type                     |
+| Import                                                       | What it is                                |
+| ------------------------------------------------------------ | ----------------------------------------- |
+| `@sarant/cloudflare-email-component`                         | Client helpers, run in your own actions   |
+| `@sarant/cloudflare-email-component/cloudflare`              | Cloudflare account setup and suppressions |
+| `@sarant/cloudflare-email-component/convex.config.js`        | The component, for `app.use`              |
+| `@sarant/cloudflare-email-component/test`                    | `register(t)` for `convex-test`           |
+| `@sarant/cloudflare-email-component/_generated/component.js` | `ComponentApi` type                       |
 
 ## Concepts
 
@@ -160,6 +161,10 @@ or when there are no credentials:
 
 A 429 or 503 is retried twice. An email whose send dies midway is marked
 `failed` after 15 minutes. Attachments are sent but not stored.
+
+Setup, receiving and suppression helpers come from
+`@sarant/cloudflare-email-component/cloudflare`, so apps that only send don't
+bundle them.
 
 ### Delivery tracking
 
@@ -306,20 +311,11 @@ different places. A handler that throws makes the sender try again.
 where `scope` is `{ type: "sending_domain", value }`. Leave `scope` out for an
 account-wide entry. Entries with `read_only` set can't be changed.
 
-### Token and account checks
-
-| Function                             | Returns                                                     |
-| ------------------------------------ | ----------------------------------------------------------- |
-| `tokenStatus(accountId, token)`      | `"active"`, `"disabled"`, `"expired"` or `"invalid"`        |
-| `accessOf(accountId, token, domain)` | `{ zoneId?, access: { sending?, workers, routing, zone } }` |
-| `zoneNamesOf(domain)`                | The zone names it could belong to, most specific first      |
-
 ### Utilities
 
-- `sha256(text)`: a hex digest. Compare `sha256(sent) === sha256(secret)` to
-  check a Worker's secret without leaking timing.
 - `toBase64(bytes: ArrayBuffer)`: for attachment `content`.
-- `inboundWorker` and `eventsWorker`: the source of the two Workers, as strings.
+- `inboundWorker` and `eventsWorker`, from `/cloudflare`: the source of the two
+  Workers, as strings.
 
 ## Component functions
 

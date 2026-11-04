@@ -1,12 +1,9 @@
 import type { Infer } from "convex/values";
-import type { vEmail } from "./schema.js";
+import type { BodyResponse, vEmail } from "./validators";
 
 const retryWaitsMs = [1000, 3000];
 const maxRecipients = 50;
 
-// shortcut: retries only ride out a few seconds; schedule an app action with just the
-// emailId, which reopens the sealed connection, if throttling lasts longer than that.
-/** Sends through Cloudflare and says who got it, or why it failed. Stores nothing. */
 export const sendThroughCloudflare = async ({
   accountId,
   apiToken,
@@ -30,6 +27,7 @@ export const sendThroughCloudflare = async ({
     return { error: `Cloudflare takes at most ${maxRecipients} recipients` };
   if (!email.text && !email.html)
     return { error: "One of `text` or `html` is required" };
+
   try {
     const post = () =>
       fetch(
@@ -44,43 +42,39 @@ export const sendThroughCloudflare = async ({
         },
       );
     let res = await post();
-    // 429 and 503 mean it never went out. Anything else, a thrown fetch included, may
-    // have, and Cloudflare takes no idempotency key, so a retry could send it twice.
+
+    // 429 and 503 mean it never went out.
     for (const wait of retryWaitsMs) {
       if (res.status !== 429 && res.status !== 503) break;
       await new Promise((resolve) => setTimeout(resolve, wait));
       res = await post();
     }
-    const body = (await res.json().catch(() => null)) as {
-      success?: boolean;
-      errors?: { message: string }[];
-      result?: {
-        message_id?: string;
-        delivered?: string[];
-        queued?: string[];
-        permanent_bounces?: string[];
-        suppressed_recipients?: string[];
-      };
-    } | null;
+
+    const body = (await res.json().catch(() => null)) as BodyResponse;
+
     if (!res.ok || !body?.success)
       return {
         error:
           body?.errors?.map((e) => e.message).join("; ") ||
           `HTTP ${res.status}`,
       };
-    const {
-      message_id: messageId,
-      delivered,
-      queued,
-      permanent_bounces: permanentBounces,
-      suppressed_recipients: suppressed,
-    } = body.result ?? {};
-    const outcome = { delivered, queued, permanentBounces, suppressed };
+
+    const r = body.result ?? {};
+    const outcome = {
+      delivered: r.delivered,
+      queued: r.queued,
+      permanentBounces: r.permanent_bounces,
+      suppressed: r.suppressed_recipients,
+    };
     // Cloudflare can say success while refusing every address.
-    const dropped = [...(permanentBounces ?? []), ...(suppressed ?? [])];
-    if (dropped.length && !delivered?.length && !queued?.length)
-      return { ...outcome, error: `Not delivered to ${dropped.join(", ")}` };
-    return { ...outcome, messageId };
+    const dropped = [
+      ...(r.permanent_bounces ?? []),
+      ...(r.suppressed_recipients ?? []),
+    ];
+    const accepted = r.delivered?.length || r.queued?.length;
+    return dropped.length && !accepted
+      ? { ...outcome, error: `Not delivered to ${dropped.join(", ")}` }
+      : { ...outcome, messageId: r.message_id };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

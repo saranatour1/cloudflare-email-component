@@ -6,9 +6,9 @@ import {
   parseDeliveryEvents,
   recordDeliveryEvents,
   sendEmail,
-  setUpDeliveryEvents,
   vEmail,
 } from "@sarant/cloudflare-email-component";
+import { setUpDeliveryEvents } from "@sarant/cloudflare-email-component/cloudflare";
 import { components, internal } from "./_generated/api.js";
 import {
   type ActionCtx,

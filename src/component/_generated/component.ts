@@ -279,22 +279,30 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             >;
             bcc?:
               | string
-              | { address: string; name?: string }
-              | Array<string | { address: string; name?: string }>;
+              | { address: string; imageId?: string; name?: string }
+              | Array<
+                  string | { address: string; imageId?: string; name?: string }
+                >;
             cc?:
               | string
-              | { address: string; name?: string }
-              | Array<string | { address: string; name?: string }>;
-            from: string | { address: string; name?: string };
+              | { address: string; imageId?: string; name?: string }
+              | Array<
+                  string | { address: string; imageId?: string; name?: string }
+                >;
+            from: string | { address: string; imageId?: string; name?: string };
             headers?: Record<string, string>;
             html?: string;
-            replyTo?: string | { address: string; name?: string };
+            replyTo?:
+              | string
+              | { address: string; imageId?: string; name?: string };
             subject: string;
             text?: string;
             to?:
               | string
-              | { address: string; name?: string }
-              | Array<string | { address: string; name?: string }>;
+              | { address: string; imageId?: string; name?: string }
+              | Array<
+                  string | { address: string; imageId?: string; name?: string }
+                >;
           };
         },
         {

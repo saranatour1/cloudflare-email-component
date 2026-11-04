@@ -13,6 +13,7 @@ import type * as events from "../events.js";
 import type * as http from "../http.js";
 import type * as lib from "../lib.js";
 import type * as send from "../send.js";
+import type * as validators from "../validators.js";
 
 import type {
   ApiFromModules,
@@ -27,6 +28,7 @@ const fullApi: ApiFromModules<{
   http: typeof http;
   lib: typeof lib;
   send: typeof send;
+  validators: typeof validators;
 }> = anyApi as any;
 
 /**
