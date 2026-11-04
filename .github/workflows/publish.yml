@@ -74,6 +74,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already has a release."
+            exit 0
+          fi
           version="${TAG#v}"
           awk -v h="## $version" '$0==h{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
           echo "npm: https://www.npmjs.com/package/@sarant/cloudflare-email-component/v/$version" >> notes.md
