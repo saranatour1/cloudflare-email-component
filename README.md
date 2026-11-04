@@ -570,13 +570,17 @@ Run `pnpm test` to test the component, its client and the example.
 
 1. Add your changes under `## Unreleased` at the top of `CHANGELOG.md`, and
    commit.
-2. Run `pnpm release` for a fix, or `pnpm release:minor` for a new feature or a
-   breaking change.
+2. On `main`, run `pnpm release` for a fix, or `pnpm release:minor` for a new
+   feature or a breaking change.
+3. Approve the new version under **Staged Packages** on npmjs.com.
 
-The script checks you're logged in to npm, runs the tests, lint and typecheck,
-turns `## Unreleased` into the new version's heading, commits and tags,
-publishes, and pushes. If npm stages the release, approve it under **Staged
-Packages** on npmjs.com.
+The script runs the tests, lint and typecheck, turns `## Unreleased` into the
+new version's heading, commits, tags and pushes. The tag starts the
+[Publish workflow](https://github.com/saranatour1/cloudflare-email-component/blob/main/.github/workflows/publish.yml),
+which checks everything again and stages the version on npm through trusted
+publishing, so no npm token is stored anywhere. npm adds a provenance badge
+linking each version to the commit it was built from. `pnpm alpha` does the same
+for a prerelease under the `alpha` tag.
 
 ## References
 

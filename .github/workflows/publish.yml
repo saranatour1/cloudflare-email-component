@@ -1,0 +1,44 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    name: Stage on npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Vite+ setup
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: false
+
+      - name: Check the tag matches package.json
+        run: |
+          test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+
+      - name: Build and check
+        run: |
+          vp run build
+          vp run test
+          vp run typecheck
+          vp check
+
+      - name: Update npm for staged publishing
+        run: npm install -g npm@11
+
+      - name: Stage on npm
+        env:
+          TAG: ${{ contains(github.ref_name, '-') && 'alpha' || 'latest' }}
+        run: |
+          npm stage publish --tag "$TAG"

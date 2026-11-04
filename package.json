@@ -1,7 +1,10 @@
 {
   "name": "@sarant/cloudflare-email-component",
   "description": "A Convex component to send, receive and track email through your own Cloudflare account.",
-  "repository": "github:saranatour1/cloudflare-email-component",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saranatour1/cloudflare-email-component.git"
+  },
   "homepage": "https://github.com/saranatour1/cloudflare-email-component#readme",
   "bugs": {
     "url": "https://github.com/saranatour1/cloudflare-email-component/issues"
@@ -27,7 +30,7 @@
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'pnpm run build:codegen' --initial",
     "predev": "convex init && pnpm run build:codegen",
     "build": "tsc --project ./tsconfig.build.json",
-    "build:codegen": "convex codegen --component-dir ./src/component && pnpm run build",
+    "build:codegen": "convex codegen --component-dir ./src/component && vp fmt src/component/_generated && pnpm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && pnpm run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example/convex",
     "lint": "vp lint .",
@@ -36,10 +39,10 @@
     "test:debug": "vp test --inspect-brk --no-file-parallelism",
     "test:coverage": "vp test run --coverage --coverage.reporter=text",
     "prepare": "pnpm run build",
-    "preversion": "(pnpm whoami || pnpm login) && pnpm install --frozen-lockfile && pnpm run build:clean && pnpm run test && pnpm run lint && pnpm run typecheck",
-    "alpha": "pnpm version prerelease --preid alpha && pnpm publish --tag alpha && git push --follow-tags",
-    "release": "pnpm version patch && pnpm publish && git push --follow-tags",
-    "release:minor": "pnpm version minor && pnpm publish && git push --follow-tags",
+    "preversion": "pnpm install --frozen-lockfile && pnpm run build:clean && pnpm run test && pnpm run lint && pnpm run typecheck",
+    "alpha": "pnpm version prerelease --preid alpha && git push --follow-tags",
+    "release": "pnpm version patch && git push --follow-tags",
+    "release:minor": "pnpm version minor && git push --follow-tags",
     "version": "node scripts/changelog.mjs && vp fmt CHANGELOG.md && git add CHANGELOG.md"
   },
   "files": [
