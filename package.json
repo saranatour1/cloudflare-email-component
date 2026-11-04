@@ -1,6 +1,6 @@
 {
   "name": "@sarant/cloudflare-email-component",
-  "description": "Send and store email through Cloudflare from Convex.",
+  "description": "A Convex component to send, receive and track email through your own Cloudflare account.",
   "repository": "github:saranatour1/cloudflare-email-component",
   "homepage": "https://github.com/saranatour1/cloudflare-email-component#readme",
   "bugs": {
@@ -13,7 +13,13 @@
   },
   "keywords": [
     "convex",
-    "component"
+    "component",
+    "convex-component",
+    "cloudflare",
+    "email",
+    "email-sending",
+    "email-routing",
+    "transactional-email"
   ],
   "type": "module",
   "scripts": {
@@ -30,14 +36,16 @@
     "test:debug": "vp test --inspect-brk --no-file-parallelism",
     "test:coverage": "vp test run --coverage --coverage.reporter=text",
     "prepare": "pnpm run build",
-    "preversion": "pnpm install --frozen-lockfile && pnpm run build:clean && pnpm run test && pnpm run lint && pnpm run typecheck",
+    "preversion": "(pnpm whoami || pnpm login) && pnpm install --frozen-lockfile && pnpm run build:clean && pnpm run test && pnpm run lint && pnpm run typecheck",
     "alpha": "pnpm version prerelease --preid alpha && pnpm publish --tag alpha && git push --follow-tags",
     "release": "pnpm version patch && pnpm publish && git push --follow-tags",
-    "version": "( pnpm whoami || pnpm login ) && vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && vp fmt CHANGELOG.md && git add CHANGELOG.md"
+    "release:minor": "pnpm version minor && pnpm publish && git push --follow-tags",
+    "version": "node scripts/changelog.mjs && vp fmt CHANGELOG.md && git add CHANGELOG.md"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "exports": {
     "./package.json": "./package.json",

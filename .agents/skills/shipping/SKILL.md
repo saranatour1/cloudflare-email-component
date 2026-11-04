@@ -18,15 +18,18 @@ typecheck, `vp check`). Nothing deploys. Each PR also gets a preview package
 through `pkg-pr-new`, which is the way to try a change in another app before
 release.
 
-The release is `pnpm release` (patch) or `pnpm alpha` (prerelease). Each one
-runs `preversion` (clean build, tests, lint, typecheck), bumps the version,
-opens `vim` to edit `CHANGELOG.md`, publishes to npm and pushes the tag. So:
+The release is `pnpm release` (patch), `pnpm release:minor` or `pnpm alpha`
+(prerelease). Each checks the npm login, runs `preversion` (clean build, tests,
+lint, typecheck), bumps the version, renames `## Unreleased` in `CHANGELOG.md`
+to the new version (`scripts/changelog.mjs` refuses an empty section), commits,
+tags, publishes and pushes. npm stages the publish: the user approves it under
+Staged Packages on npmjs.com. So:
 
-- Leave releasing to the user. It needs their npm login and an interactive
-  editor, and a published version can't be reused, even after an unpublish.
-- `pnpm release` always bumps the patch number. If the change breaks something,
-  tell the user to run `pnpm version minor` (or `major`) before publishing.
-  needs the version heading.
+- Add every user-facing change under `## Unreleased` in `CHANGELOG.md` as part
+  of the PR that makes it.
+- Leave releasing to the user. It needs their npm login and 2FA approval, and a
+  published version can't be reused, even after an unpublish.
+- A breaking change needs `pnpm release:minor` (or `major`), not `pnpm release`.
 
 ## The public API
 
