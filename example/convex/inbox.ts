@@ -1,12 +1,12 @@
 import { v } from "convex/values";
 import PostalMime from "postal-mime";
+import type { Email } from "@sarant/cloudflare-email-component";
 import {
   createRule,
-  type Email,
   routingEnabled,
   ruleFor,
   uploadWorker,
-} from "@sarant/cloudflare-email-component";
+} from "@sarant/cloudflare-email-component/cloudflare";
 import { components, internal } from "./_generated/api.js";
 import { env, internalAction } from "./_generated/server.js";
 import { deliver } from "./example.js";

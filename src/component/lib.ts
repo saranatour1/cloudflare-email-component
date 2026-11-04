@@ -16,11 +16,14 @@ import {
   query,
 } from "./_generated/server.js";
 import { deliveryOf, messageIdKey, removeEventsOf } from "./events.js";
-import schema, { vEmail, vEventsHandler, vReceiveHandler } from "./schema.js";
 import { sendThroughCloudflare } from "./send.js";
-
-const emailDoc = schema.doc("emails");
-const direction = v.union(v.literal("inbound"), v.literal("outbound"));
+import schema from "./schema.js";
+import {
+  vDirection,
+  vEmail,
+  vEventsHandler,
+  vReceiveHandler,
+} from "./validators.js";
 
 // Past the 10 minutes an action can run, so the send can't still be going.
 const stuckAfterMs = 15 * 60 * 1000;
@@ -47,8 +50,9 @@ export const expire = internalMutation({
   returns: v.null(),
   handler: async (ctx, { emailId }) => {
     const email = await ctx.db.get("emails", emailId);
-    if (email?.status === "queued")
+    if (email?.status === "queued") {
       await ctx.db.patch("emails", emailId, { status: "failed" });
+    }
     return null;
   },
 });
@@ -127,25 +131,26 @@ export const receive = mutation({
 
 export const get = query({
   args: { emailId: v.id("emails") },
-  returns: v.union(v.null(), emailDoc),
+  returns: v.union(v.null(), schema.doc("emails")),
   handler: (ctx, { emailId }) => ctx.db.get("emails", emailId),
 });
 
 export const list = query({
   args: {
     owner: v.string(),
-    direction,
+    direction: vDirection,
     paginationOpts: paginationOptsValidator,
   },
-  returns: paginationResultValidator(emailDoc),
-  handler: (ctx, { owner, direction, paginationOpts }) =>
-    ctx.db
+  returns: paginationResultValidator(schema.doc("emails")),
+  handler: (ctx, { owner, direction, paginationOpts }) => {
+    return ctx.db
       .query("emails")
       .withIndex("by_owner_and_direction", (q) =>
         q.eq("owner", owner).eq("direction", direction),
       )
       .order("desc")
-      .paginate(paginationOpts),
+      .paginate(paginationOpts);
+  },
 });
 
 export const page = query({

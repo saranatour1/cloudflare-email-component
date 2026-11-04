@@ -1,11 +1,23 @@
-// Mounted by the app with app.use(cloudflareEmail, { httpPrefix: "/email/" }), so these are
-// /email/inbound and /email/events. Each checks its Worker's secret and hands what it was
-// sent to the app's handler from `setHandlers`, as owners and sealing are the app's call.
+// Served at /email/inbound and /email/events once the app mounts the component with
+// httpPrefix "/email/". Each checks its Worker's secret, then hands the request to the
+// app's handler from `setHandlers`.
 import { httpRouter } from "convex/server";
-import { sha256 } from "../client/cloudflare.js";
 import { internal } from "./_generated/api.js";
-import { env, httpAction } from "./_generated/server.js";
+import type { Doc } from "./_generated/dataModel.js";
+import { type ActionCtx, env, httpAction } from "./_generated/server.js";
 import { parseDeliveryEvents } from "./deliveryEvents.js";
+
+const sha256 = async (text: string) =>
+  Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+    ),
+    (b) => b.toString(16).padStart(2, "0"),
+  ).join("");
+
+const maxMessageBytes = 15 * 1024 * 1024;
+const reply = (status: number, text?: string) =>
+  new Response(text ?? null, { status });
 
 const authorized = async (req: Request, secret: string | undefined) => {
   const bearer = req.headers.get("Authorization")?.replace(/^Bearer /, "");
@@ -14,53 +26,56 @@ const authorized = async (req: Request, secret: string | undefined) => {
   );
 };
 
-// Under the 16 MiB a function argument can be, which is how the app gets it.
-const maxMessageBytes = 15 * 1024 * 1024;
-
 const http = httpRouter();
 
-// A 403 turns the message away. Anything else that fails, including a 503 before the app
-// sets a handler, has Cloudflare try again later.
-http.route({
-  path: "/inbound",
-  method: "POST",
-  handler: httpAction(async (ctx, req) => {
-    if (!(await authorized(req, env.INBOUND_SECRET)))
-      return new Response("Unauthorized", { status: 401 });
-    const onReceive = (await ctx.runQuery(internal.lib.handlers, {}))
-      ?.onReceive;
-    if (!onReceive)
-      return new Response("No onReceive handler set", { status: 503 });
+const route = <K extends "onReceive" | "onEvents">(
+  path: string,
+  secret: "INBOUND_SECRET" | "EVENTS_SECRET",
+  key: K,
+  run: (
+    ctx: ActionCtx,
+    req: Request,
+    handler: NonNullable<Doc<"handlers">[K]>,
+  ) => Promise<Response>,
+) =>
+  http.route({
+    path,
+    method: "POST",
+    handler: httpAction(async (ctx, req) => {
+      if (!(await authorized(req, env[secret])))
+        return reply(401, "Unauthorized");
+      const handler = (await ctx.runQuery(internal.lib.handlers, {}))?.[key];
+      if (!handler) return reply(503, `No ${key} handler set`); // Cloudflare retries later
+      return run(ctx, req, handler);
+    }),
+  });
+
+// 403 turns the message away for good; any other failure has Cloudflare retry it.
+route(
+  "/inbound",
+  "INBOUND_SECRET",
+  "onReceive",
+  async (ctx, req, onReceive) => {
+    if (Number(req.headers.get("Content-Length")) > maxMessageBytes)
+      return reply(403, "Message too large");
     const raw = await req.arrayBuffer();
     if (raw.byteLength > maxMessageBytes)
-      return new Response("Message too large", { status: 403 });
+      return reply(403, "Message too large");
     const verdict = await ctx.runAction(onReceive, {
       raw,
       envelopeFrom: req.headers.get("X-Envelope-From") ?? undefined,
       envelopeTo: req.headers.get("X-Envelope-To") ?? undefined,
     });
-    return verdict === "accept"
-      ? new Response(null, { status: 204 })
-      : new Response("Rejected", { status: 403 });
-  }),
-});
+    return verdict === "accept" ? reply(204) : reply(403, "Rejected");
+  },
+);
 
-// Any failure makes Queues retry the batch, five times, then park it in the dead letter queue.
-http.route({
-  path: "/events",
-  method: "POST",
-  handler: httpAction(async (ctx, req) => {
-    if (!(await authorized(req, env.EVENTS_SECRET)))
-      return new Response("Unauthorized", { status: 401 });
-    const body: unknown = await req.json().catch(() => null);
-    if (!Array.isArray(body))
-      return new Response("Expected a list of events", { status: 400 });
-    const onEvents = (await ctx.runQuery(internal.lib.handlers, {}))?.onEvents;
-    if (!onEvents)
-      return new Response("No onEvents handler set", { status: 503 });
-    await ctx.runAction(onEvents, { events: parseDeliveryEvents(body) });
-    return new Response(null, { status: 204 });
-  }),
+// Any failure makes Queues retry the batch five times, then park it in the dead letter queue.
+route("/events", "EVENTS_SECRET", "onEvents", async (ctx, req, onEvents) => {
+  const body: unknown = await req.json().catch(() => null);
+  if (!Array.isArray(body)) return reply(400, "Expected a list of events");
+  await ctx.runAction(onEvents, { events: parseDeliveryEvents(body) });
+  return reply(204);
 });
 
 export default http;

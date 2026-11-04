@@ -45,6 +45,10 @@
       "types": "./dist/client/index.d.ts",
       "default": "./dist/client/index.js"
     },
+    "./cloudflare": {
+      "types": "./dist/client/cloudflare.d.ts",
+      "default": "./dist/client/cloudflare.js"
+    },
     "./test": "./src/test.ts",
     "./_generated/component.js": {
       "types": "./dist/component/_generated/component.d.ts"

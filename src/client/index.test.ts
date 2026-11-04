@@ -16,6 +16,7 @@ import {
   parseDeliveryEvents,
   recordDeliveryEvents,
   sendEmail,
+  toBase64,
   vEmail,
 } from "./index.js";
 
@@ -260,4 +261,12 @@ describe("recordDeliveryEvents", () => {
       "you@example.com",
     );
   });
+});
+
+test("toBase64 handles more than one piece, and any byte", () => {
+  const bytes = Uint8Array.from({ length: 20000 }, (_, i) => i % 256);
+  const decoded = Uint8Array.from(atob(toBase64(bytes.buffer)), (c) =>
+    c.charCodeAt(0),
+  );
+  expect(decoded).toEqual(bytes);
 });

@@ -182,7 +182,7 @@ Cloudflare adds bounces and spam complaints to the list itself. Add your own for
 unsubscribes, since it doesn't process unsubscribe links:
 
 ```ts
-import { addSuppression } from "@sarant/cloudflare-email-component";
+import { addSuppression } from "@sarant/cloudflare-email-component/cloudflare";
 
 await addSuppression(accountId, token, { email: "jane@example.net" });
 ```
@@ -200,7 +200,7 @@ same way inbound mail arrives. Set it up once for each sending domain, from one
 of your actions:
 
 ```ts
-import { setUpDeliveryEvents } from "@sarant/cloudflare-email-component";
+import { setUpDeliveryEvents } from "@sarant/cloudflare-email-component/cloudflare";
 
 // Keep the result for removeDeliveryEvents.
 const setup = await setUpDeliveryEvents(accountId, token, {
@@ -276,7 +276,7 @@ import {
   routingEnabled,
   ruleFor,
   uploadWorker,
-} from "@sarant/cloudflare-email-component";
+} from "@sarant/cloudflare-email-component/cloudflare";
 
 await uploadWorker(accountId, token, "my-inbound-worker", {
   inboundUrl: `${process.env.CONVEX_SITE_URL}/email/inbound`,
@@ -288,8 +288,7 @@ await createRule(zoneId, token, "me@example.com", "my-inbound-worker");
 
 Check `routingEnabled` first: turning Email Routing on replaces the domain's MX
 records, so leave that to the domain's owner. Check `ruleFor` too, since a
-second rule for the same address won't run. `removeInbound` undoes the setup,
-and `tokenStatus` and `accessOf` report what a token can reach.
+second rule for the same address won't run. `removeInbound` undoes the setup.
 
 Domain setup is in **Email Routing** in the dashboard. `forwardTo` must be a
 verified destination address.
