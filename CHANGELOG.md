@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
 - First version published from GitHub Actions with trusted publishing, so npm
   shows its provenance. 0.2.1 was tagged but never reached npm, and its changes
