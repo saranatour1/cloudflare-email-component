@@ -7,6 +7,8 @@ catalog:
 overrides:
   vite@*: "catalog:"
   vitest@*: "catalog:"
+  # GHSA-g3hv-75wg-m249: typescript-estree still asks for minimatch 10
+  minimatch@>=7 <11.0.1: ^11.0.1
 peerDependencyRules:
   allowAny:
     - vite
