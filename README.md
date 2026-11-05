@@ -403,6 +403,13 @@ await uploadWorker(accountId, token, "my-inbound-worker", {
 await createRule(zoneId, token, "support@example.com", "my-inbound-worker");
 ```
 
+- `inboundUrl` must be your deployment's `.convex.site` URL, which is
+  `CONVEX_SITE_URL`: `https://<deployment>.convex.site/email/inbound`. HTTP
+  routes are served only there. The `.convex.cloud` URL (`CONVEX_CLOUD_URL`, the
+  one your client connects to) has no `/email/inbound`, so a Worker pointed at
+  it can't hand over any mail.
+- The Worker receives nothing until a routing rule sends the address to it. An
+  address whose rule forwards somewhere else keeps going there.
 - Turning on Email Routing replaces the domain's MX records, so the code never
   does it. Leave that to the domain's owner, in the dashboard.
 - A second rule for the same address won't run, which is why `ruleFor` checks
@@ -548,8 +555,15 @@ went before, such as Gmail. Use `*@example.com` for the domain's catch-all rule,
 so every address without its own rule comes here, each as its own inbox.
 Changing a rule doesn't bring back mail it already delivered.
 
+The Worker posts every email it receives to the deployment's `.convex.site` URL,
+`https://<deployment>.convex.site/email/inbound`, and Add inbox and `setUpInbox`
+set that from `CONVEX_SITE_URL`. If you set up the Worker or a rule by hand in
+the Cloudflare dashboard, use that `.convex.site` address, not the
+`.convex.cloud` one in `VITE_CONVEX_URL`, and send the rule to the Worker
+(**Send to a Worker** → `email-inbox-<domain>`).
+
 If mail doesn't show up, this lists where each address goes and where the Worker
-posts:
+posts, which should be your `.convex.site` URL:
 
 ```sh
 pnpm exec convex run inbox:routingStatus '{"domain":"example.com"}'
