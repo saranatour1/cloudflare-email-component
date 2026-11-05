@@ -525,16 +525,29 @@ Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` with
 pnpm exec convex run example:send '{"email":{"from":"me@example.com","to":["you@example.com"],"subject":"Hi","text":"Hello"}}'
 ```
 
-The example also has an inbox at `https://<deployment>.convex.site/inbox`, with
-one inbox per address, threads and replies. Set `INBOUND_SECRET`, turn on Email
-Routing for the domain, and route each address to it:
+The example also has a full inbox: a React app in `example/` with sign-in,
+threads, compose and reply, read/unread, Archive and Trash, kept attachments and
+live delivery status. Set `INBOUND_SECRET`, turn on Email Routing for the
+domain, and route each address to it:
 
 ```sh
 pnpm exec convex run inbox:setUpInbox '{"zoneId":"<zone id>","addresses":["support@example.com"]}'
 ```
 
-The inbox has no sign-in, so anyone with its URL can read that mail and reply as
-your domain. Put your own auth in front of it before using it with real mail.
+Sign-in uses [Convex Auth v2](https://auth-v2.previews.convex.dev) (beta) with
+the email as the username. Anyone can make an account, but only the emails in
+`INBOX_USERS` see any mail. Set its signing keys and the list once:
+
+```sh
+node -e 'const c=require("crypto"),k=c.generateKeyPairSync("rsa",{modulusLength:2048});console.log(Buffer.from(k.privateKey.export({type:"pkcs8",format:"pem"})).toString("base64"));console.log(JSON.stringify({keys:[{...k.publicKey.export({format:"jwk"}),kid:c.randomUUID(),alg:"RS256",use:"sig"}]}))' > keys.txt
+pnpm exec convex env set "AUTH_PRIVATE_KEY=$(sed -n 1p keys.txt)"
+pnpm exec convex env set "AUTH_JWKS=$(sed -n 2p keys.txt)" && rm keys.txt
+pnpm exec convex env set INBOX_USERS you@example.com,teammate@example.com
+```
+
+Then run `pnpm dev` and `pnpm dev:example`, open http://localhost:5173 and sign
+up with an email on the list. Mail that arrived before the inbox existed comes
+in with `pnpm exec convex run mail:backfill`.
 
 Run `pnpm test` to test the component, its client and the example.
 

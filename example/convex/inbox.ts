@@ -7,11 +7,10 @@ import {
   ruleFor,
   uploadWorker,
 } from "@sarant/cloudflare-email-component/cloudflare";
-import { components, internal } from "./_generated/api.js";
+import { internal } from "./_generated/api.js";
 import { env, internalAction } from "./_generated/server.js";
-import { deliver } from "./example.js";
 
-type Stored = {
+export type Stored = {
   _id: string;
   _creationTime: number;
   direction: "inbound" | "outbound";
@@ -36,11 +35,11 @@ const textOf = (html: string) =>
 const addressOf = (address: Email["from"]) =>
   (typeof address === "string" ? address : address.address).toLowerCase();
 
-const messageIds = (text?: string | null) =>
+export const messageIds = (text?: string | null) =>
   text?.match(/<[^<>\s]+>/g) ?? ([] as string[]);
 
 // What's kept is what the app sealed, which here is plain JSON.
-const toMessage = (email: Stored) => {
+export const toMessage = (email: Stored) => {
   const common = {
     id: email._id,
     at: email._creationTime,
@@ -55,11 +54,13 @@ const toMessage = (email: Stored) => {
       subject?: string;
       text?: string;
       messageId?: string;
+      inReplyTo?: string;
       references?: string;
       attachments?: string[];
     };
     return {
       ...common,
+      direction: "inbound" as const,
       // The address it came in on is what makes it part of an inbox.
       inbox: mail.to.toLowerCase(),
       from: mail.from ?? "Unknown sender",
@@ -70,6 +71,7 @@ const toMessage = (email: Stored) => {
       text: mail.text ?? "",
       attachments: mail.attachments ?? [],
       messageId: messageIds(mail.messageId)[0],
+      inReplyTo: messageIds(mail.inReplyTo),
       references: messageIds(mail.references),
     };
   }
@@ -80,6 +82,7 @@ const toMessage = (email: Stored) => {
     .map(addressOf);
   return {
     ...common,
+    direction: "outbound" as const,
     inbox: addressOf(mail.from),
     from: addressOf(mail.from),
     replyTo: to,
@@ -89,6 +92,7 @@ const toMessage = (email: Stored) => {
     status: email.delivery ?? email.status,
     error: email.error,
     messageId: email.messageId && `<${email.messageId}>`,
+    inReplyTo: messageIds(mail.headers?.["In-Reply-To"]),
     references: messageIds(mail.headers?.References),
   };
 };
@@ -104,8 +108,7 @@ export const receive = internalAction({
   handler: async (ctx, { raw, envelopeFrom, envelopeTo }) => {
     // A message it can't parse is still kept, as a retry would fail the same way.
     const mail = await PostalMime.parse(raw).catch(() => undefined);
-    // shortcut: plain text, without attachments. Encrypt real mail, and put its
-    // attachments in `ctx.storage`.
+    // shortcut: plain text. Encrypt real mail. Attachments go to file storage below.
     const payload = JSON.stringify({
       // The envelope sender is often a bounce address, so prefer what the mail says.
       from: mail?.from?.address ?? envelopeFrom,
@@ -117,106 +120,26 @@ export const receive = internalAction({
         ? (mail.text ?? textOf(mail.html ?? ""))
         : new TextDecoder().decode(raw),
       messageId: mail?.messageId,
+      inReplyTo: mail?.inReplyTo,
       references: mail?.references,
       attachments: mail?.attachments.map((a) => a.filename ?? "Unnamed"),
     });
     // Retrying a message that can never fit in a document would fail forever.
     if (new TextEncoder().encode(payload).length > maxPayloadBytes)
       return "reject";
-    await ctx.runMutation(components.cloudflareEmail.lib.receive, {
-      owner: "example",
-      payload,
-    });
-    return "accept";
-  },
-});
-
-// An action, as a query can make only one paginated call and this makes two.
-export const threads = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const newest = async (direction: "inbound" | "outbound") =>
-      // shortcut: the newest 50 each way, page on with continueCursor for a real mailbox.
-      (
-        await ctx.runQuery(components.cloudflareEmail.lib.list, {
-          owner: "example",
-          direction,
-          paginationOpts: { numItems: 50, cursor: null },
-        })
-      ).page;
-    const [inbound, outbound] = await Promise.all([
-      newest("inbound"),
-      newest("outbound"),
-    ]);
-    // shortcut: one query per sent email, fine for 50, keep a summary per email past that.
-    const historyOf = async (emailId: string) =>
-      (
-        await ctx.runQuery(components.cloudflareEmail.events.list, {
-          emailId,
-          paginationOpts: { numItems: 20, cursor: null },
-        })
-      ).page
-        .map(({ status, at, payload }) => {
-          const event = JSON.parse(payload) as {
-            recipient?: string;
-            delivery?: { smtpResponse?: string };
-            bounce?: { reason?: string };
-          };
-          return {
-            status,
-            at,
-            recipient: event.recipient,
-            detail: event.bounce?.reason ?? event.delivery?.smtpResponse,
-          };
-        })
-        .sort((a, b) => a.at - b.at);
-    const sent = await Promise.all(
-      outbound.map(async (email) => ({
-        ...toMessage(email),
-        events: email.messageId ? await historyOf(email._id) : [],
-      })),
-    );
-    const messages = [...inbound.map(toMessage), ...sent].sort(
-      (a, b) => a.at - b.at,
-    );
-    const byRoot = new Map<string, typeof messages>();
-    for (const message of messages) {
-      // Every reply names the message that started its thread first.
-      const root = message.references[0] ?? message.messageId ?? message.id;
-      byRoot.set(root, [...(byRoot.get(root) ?? []), message]);
+    const attachments = [];
+    for (const a of mail?.attachments ?? []) {
+      const blob = new Blob([a.content as BlobPart], { type: a.mimeType });
+      attachments.push({
+        filename: a.filename ?? "Unnamed",
+        contentType: a.mimeType,
+        size: blob.size,
+        // ponytail: a failed mutation below orphans these, sweep `_storage` if that bites.
+        storageId: await ctx.storage.store(blob),
+      });
     }
-    return [...byRoot.values()].sort((a, b) => b.at(-1)!.at - a.at(-1)!.at);
-  },
-});
-
-export const reply = internalAction({
-  args: { emailId: v.string(), text: v.string() },
-  handler: async (ctx, { emailId, text }) => {
-    const original = await ctx.runQuery(components.cloudflareEmail.lib.get, {
-      emailId,
-    });
-    if (original?.owner !== "example")
-      throw new Error("That email isn't here anymore");
-    const { inbox, replyTo, subject, messageId, references } =
-      toMessage(original);
-    // A send that failed has no ID, so its retry answers what it was answering.
-    const chain = messageId ? [...references, messageId] : references;
-    return await deliver(ctx, {
-      from: inbox,
-      to: replyTo,
-      subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-      text,
-      ...(chain.length > 0 && {
-        headers: {
-          "In-Reply-To": chain.at(-1)!,
-          // Cloudflare caps a header at 2,048 bytes. Threading needs the first and latest.
-          References: (chain.length > 10
-            ? [chain[0], ...chain.slice(-9)]
-            : chain
-          ).join(" "),
-        },
-      }),
-    });
+    await ctx.runMutation(internal.mail.receive, { payload, attachments });
+    return "accept";
   },
 });
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The example is now a full inbox: a React app in `example/` with Convex Auth
+  sign-in limited to `INBOX_USERS`, threads, compose and reply with attachments,
+  read/unread, Archive and Trash, and live delivery status. It replaces the
+  unauthenticated `/inbox` page. The package itself is unchanged.
+
 ## 0.2.2
 
 - First version published from GitHub Actions with trusted publishing, so npm
