@@ -403,6 +403,13 @@ await uploadWorker(accountId, token, "my-inbound-worker", {
 await createRule(zoneId, token, "support@example.com", "my-inbound-worker");
 ```
 
+- `inboundUrl` must be your deployment's `.convex.site` URL, which is
+  `CONVEX_SITE_URL`: `https://<deployment>.convex.site/email/inbound`. HTTP
+  routes are served only there. The `.convex.cloud` URL (`CONVEX_CLOUD_URL`, the
+  one your client connects to) has no `/email/inbound`, so a Worker pointed at
+  it can't hand over any mail.
+- The Worker receives nothing until a routing rule sends the address to it. An
+  address whose rule forwards somewhere else keeps going there.
 - Turning on Email Routing replaces the domain's MX records, so the code never
   does it. Leave that to the domain's owner, in the dashboard.
 - A second rule for the same address won't run, which is why `ruleFor` checks
@@ -525,16 +532,57 @@ Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` with
 pnpm exec convex run example:send '{"email":{"from":"me@example.com","to":["you@example.com"],"subject":"Hi","text":"Hello"}}'
 ```
 
-The example also has an inbox at `https://<deployment>.convex.site/inbox`, with
-one inbox per address, threads and replies. Set `INBOUND_SECRET`, turn on Email
-Routing for the domain, and route each address to it:
+The example also has a full inbox: a React app in `example/`, laid out like
+shadcn/ui's [mail example](https://v3.shadcn.com/examples/mail), with sign-in,
+every inbox in one list, search, compose and reply with attachments,
+read/unread, Archive and Trash, and live delivery status.
+
+Mail reaches it only through an Email Routing rule that sends the address to the
+inbox Worker. Until an address's rule points at the Worker, its mail keeps going
+wherever the rule sent it before, and nothing shows up here. Set
+`INBOUND_SECRET`, turn on Email Routing for the domain, then add addresses with
+**Add inbox** at the bottom of the sidebar, or from the CLI:
 
 ```sh
 pnpm exec convex run inbox:setUpInbox '{"zoneId":"<zone id>","addresses":["support@example.com"]}'
 ```
 
-The inbox has no sign-in, so anyone with its URL can read that mail and reply as
-your domain. Put your own auth in front of it before using it with real mail.
+That uploads one Worker per domain and creates a rule for each address that has
+none. An address that already has a rule is left alone, unless you tick **Keep
+forwarding a copy** (or pass `"keepForwarding":true`) and the rule forwards: the
+rule then points at the Worker, which keeps forwarding a copy where the mail
+went before, such as Gmail. Use `*@example.com` for the domain's catch-all rule,
+so every address without its own rule comes here, each as its own inbox.
+Changing a rule doesn't bring back mail it already delivered.
+
+The Worker posts every email it receives to the deployment's `.convex.site` URL,
+`https://<deployment>.convex.site/email/inbound`, and Add inbox and `setUpInbox`
+set that from `CONVEX_SITE_URL`. If you set up the Worker or a rule by hand in
+the Cloudflare dashboard, use that `.convex.site` address, not the
+`.convex.cloud` one in `VITE_CONVEX_URL`, and send the rule to the Worker
+(**Send to a Worker** → `email-inbox-<domain>`).
+
+If mail doesn't show up, this lists where each address goes and where the Worker
+posts, which should be your `.convex.site` URL:
+
+```sh
+pnpm exec convex run inbox:routingStatus '{"domain":"example.com"}'
+```
+
+Sign-in uses [Convex Auth v2](https://auth-v2.previews.convex.dev) (beta) with
+the email as the username. Anyone can make an account, but only the emails in
+`INBOX_USERS` see any mail. Set its signing keys and the list once:
+
+```sh
+node -e 'const c=require("crypto"),k=c.generateKeyPairSync("rsa",{modulusLength:2048});console.log(Buffer.from(k.privateKey.export({type:"pkcs8",format:"pem"})).toString("base64"));console.log(JSON.stringify({keys:[{...k.publicKey.export({format:"jwk"}),kid:c.randomUUID(),alg:"RS256",use:"sig"}]}))' > keys.txt
+pnpm exec convex env set "AUTH_PRIVATE_KEY=$(sed -n 1p keys.txt)"
+pnpm exec convex env set "AUTH_JWKS=$(sed -n 2p keys.txt)" && rm keys.txt
+pnpm exec convex env set INBOX_USERS you@example.com,teammate@example.com
+```
+
+Then run `pnpm dev` and `pnpm dev:example`, open http://localhost:5173 and sign
+up with an email on the list. Mail that arrived before the inbox existed comes
+in with `pnpm exec convex run mail:backfill`.
 
 Run `pnpm test` to test the component, its client and the example.
 

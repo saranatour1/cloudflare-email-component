@@ -19,7 +19,9 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    /* Convex Auth ships its test helpers as .ts source. */
+    "allowImportingTsExtensions": true
   },
   "include": ["./**/*"],
   "exclude": ["./_generated"]

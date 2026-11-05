@@ -6,7 +6,7 @@ import {
   test,
   vi,
 } from "vite-plus/test";
-import { internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import { initConvexTest } from "./setup.test";
 
 const listOf = async (
@@ -42,6 +42,19 @@ const receiveRaw = (
       .buffer,
     ...envelope,
   });
+
+// A user who signed up with this email, as Convex Auth's token names them.
+const signIn = async (
+  t: ReturnType<typeof initConvexTest>,
+  email = "me@example.com",
+) => {
+  const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+  await t.mutation(components.authUsername.public.setUsername, {
+    userId,
+    username: email,
+  });
+  return t.withIdentity({ subject: userId });
+};
 
 const email = {
   from: "me@example.com",
@@ -158,9 +171,9 @@ describe("example", () => {
     ).toHaveLength(1);
     const [sent] = await listOf(t, "outbound");
     expect(sent.delivery).toBe("bounced");
-    const [[shown]] = await (await t.fetch("/inbox/threads")).json();
-    expect(shown.status).toBe("bounced");
-    expect(shown.events).toMatchObject([
+    vi.stubEnv("INBOX_USERS", "me@example.com");
+    const as = await signIn(t);
+    expect(await as.query(api.mail.deliveries, { emailId })).toMatchObject([
       { status: "delivered", recipient: "you@example.com" },
       { status: "bounced", recipient: "you@example.com" },
     ]);
@@ -176,19 +189,27 @@ describe("example", () => {
   });
 
   describe("inbox", () => {
+    beforeEach(() => vi.stubEnv("INBOX_USERS", "Me@example.com, other@x.com"));
     const receive = (t: ReturnType<typeof initConvexTest>, raw: string) =>
       receiveRaw(t, raw, {
         envelopeFrom: "bounce-123@mailer.example.com",
         envelopeTo: "Support@example.com",
       });
-    const threadsOf = async (t: ReturnType<typeof initConvexTest>) =>
-      (await t.fetch("/inbox/threads")).json();
-    const reply = (t: ReturnType<typeof initConvexTest>, body: unknown) =>
-      t.fetch("/inbox/reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+    const page = { numItems: 50, cursor: null };
+    const threadsOf = async (
+      as: Awaited<ReturnType<typeof signIn>>,
+      view: "inbox" | "sent" | "archive" | "trash" = "inbox",
+    ) => {
+      const { page: threads } = await as.query(api.mail.threads, {
+        view,
+        paginationOpts: page,
       });
+      return Promise.all(
+        threads.map(
+          async (t) => (await as.query(api.mail.thread, { threadId: t._id }))!,
+        ),
+      );
+    };
     const first = [
       "From: Them <them@example.org>",
       "Reply-To: desk@example.org",
@@ -228,27 +249,56 @@ describe("example", () => {
         );
     };
 
-    test("the page runs only its own script", async () => {
-      const res = await initConvexTest().fetch("/inbox");
-      const [, nonce] = /script-src 'nonce-([^']+)'/.exec(
-        res.headers.get("Content-Security-Policy")!,
-      )!;
-      expect(await res.text()).toContain(`<script nonce="${nonce}">`);
+    test("turns away anyone not signed in, or not on INBOX_USERS", async () => {
+      const t = initConvexTest();
+      const args = { view: "inbox" as const, paginationOpts: page };
+      await expect(t.query(api.mail.threads, args)).rejects.toThrow(
+        "Not on INBOX_USERS",
+      );
+      const stranger = await signIn(t, "stranger@example.com");
+      expect(await stranger.query(api.mail.me)).toBeNull();
+      await expect(stranger.query(api.mail.threads, args)).rejects.toThrow(
+        "Not on INBOX_USERS",
+      );
+      await expect(
+        stranger.action(api.mail.compose, {
+          from: "support@example.com",
+          to: ["a@b.c"],
+          subject: "Hi",
+          text: "Hi",
+        }),
+      ).rejects.toThrow("Not on INBOX_USERS");
+      const me = await signIn(t, "me@EXAMPLE.com");
+      expect(await me.query(api.mail.me)).toBe("me@EXAMPLE.com");
     });
 
-    test("parses mail into the inbox it came in on", async () => {
+    test("parses mail into the inbox it came in on, attachments and all", async () => {
       const t = initConvexTest();
       expect(await receive(t, first)).toBe("accept");
-      const [[message]] = await threadsOf(t);
-      expect(message).toMatchObject({
+      const as = await signIn(t);
+      expect(await as.query(api.mail.inboxes)).toEqual(["support@example.com"]);
+      const [thread] = await threadsOf(as);
+      expect(thread).toMatchObject({
         inbox: "support@example.com",
+        subject: "Café",
+        with: "Them",
+        unread: true,
+        folder: "inbox",
+      });
+      const [message] = thread.messages;
+      expect(message).toMatchObject({
         from: "them@example.org",
         fromName: "Them",
         replyTo: ["desk@example.org"],
-        subject: "Café",
         text: expect.stringContaining("Hello there"),
-        attachments: ["a.pdf"],
+        attachments: [
+          { filename: "a.pdf", contentType: "application/pdf", size: 16 },
+        ],
       });
+      const text = await t.run(async (ctx) =>
+        (await ctx.storage.get(message.attachments[0].storageId))!.text(),
+      );
+      expect(text).toBe("not really a pdf");
     });
 
     test("makes text out of mail that's only HTML", async () => {
@@ -257,8 +307,8 @@ describe("example", () => {
         t,
         'Content-Type: text/html\r\n\r\n<style>p{}</style><script>bad()</script><p>One <b onclick="x">two</b></p>Three',
       );
-      const [[message]] = await threadsOf(t);
-      expect(message.text).toBe("One two\nThree");
+      const [thread] = await threadsOf(await signIn(t));
+      expect(thread.messages[0].text).toBe("One two\nThree");
     });
 
     test("keeps a message's bytes when it isn't UTF-8", async () => {
@@ -270,18 +320,22 @@ describe("example", () => {
         0xe9,
       ]);
       await receiveRaw(t, body, { envelopeTo: "support@example.com" });
-      const [[message]] = await threadsOf(t);
-      expect(message.text).toContain("Café");
+      const [thread] = await threadsOf(await signIn(t));
+      expect(thread.messages[0].text).toContain("Café");
     });
 
     test("a reply threads with the mail, and their answer joins it", async () => {
       const sent = cloudflareSays();
       const t = initConvexTest();
       await receive(t, first);
-      const [[message]] = await threadsOf(t);
+      const as = await signIn(t);
+      const [{ messages }] = await threadsOf(as);
 
-      const res = await reply(t, { emailId: message.id, text: "Hi back" });
-      expect((await res.json()).messageId).toBe("<ours@example.com>");
+      const { error } = await as.action(api.mail.reply, {
+        emailId: messages[0].id,
+        text: "Hi back",
+      });
+      expect(error).toBeUndefined();
       expect(sent()).toMatchObject({
         from: "support@example.com",
         to: ["desk@example.org"],
@@ -293,6 +347,7 @@ describe("example", () => {
         },
       });
 
+      // Only In-Reply-To, as some mail clients send.
       await receive(
         t,
         [
@@ -300,32 +355,33 @@ describe("example", () => {
           "Subject: Re: Café",
           "Message-ID: <third@example.org>",
           "In-Reply-To: <ours@example.com>",
-          "References: <first@example.org> <ours@example.com>",
           "",
           "And again",
         ].join("\r\n"),
       );
       await receive(t, "From: other@example.org\r\nSubject: New\r\n\r\nHi");
 
-      const threads = await threadsOf(t);
+      const threads = await threadsOf(as);
       expect(threads).toHaveLength(2);
-      const thread = threads.find(
-        (m: { subject: string }[]) => m[0].subject === "Café",
-      );
-      expect(thread.map((m: { direction: string }) => m.direction)).toEqual([
+      const thread = threads.find((th) => th.subject === "Café")!;
+      expect(thread.messages.map((m) => m.direction)).toEqual([
         "inbound",
         "outbound",
         "inbound",
       ]);
+      expect(thread).toMatchObject({ sent: true, snippet: "And again" });
+      expect(await threadsOf(as, "sent")).toHaveLength(1);
 
-      await reply(t, { emailId: thread[2].id, text: "Last one" });
+      await as.action(api.mail.reply, {
+        emailId: thread.messages[2].id,
+        text: "Last one",
+      });
       expect(sent()).toMatchObject({
         subject: "Re: Café",
         to: ["them@example.org"],
         headers: {
           "In-Reply-To": "<third@example.org>",
-          References:
-            "<first@example.org> <ours@example.com> <third@example.org>",
+          References: "<third@example.org>",
         },
       });
     });
@@ -334,20 +390,27 @@ describe("example", () => {
       const sent = cloudflareSays();
       const t = initConvexTest();
       await receive(t, first);
-      const [[message]] = await threadsOf(t);
+      const as = await signIn(t);
+      const [{ messages }] = await threadsOf(as);
       vi.mocked(fetch).mockResolvedValueOnce(
         new Response(
           JSON.stringify({ success: false, errors: [{ message: "No" }] }),
           { status: 400 },
         ),
       );
-      const failed = await reply(t, { emailId: message.id, text: "Hi" });
-      expect((await failed.json()).error).toBe("No");
+      const failed = await as.action(api.mail.reply, {
+        emailId: messages[0].id,
+        text: "Hi",
+      });
+      expect(failed.error).toBe("No");
 
-      const [thread] = await threadsOf(t);
-      expect(thread).toHaveLength(2);
-      expect(thread[1].status).toBe("failed");
-      await reply(t, { emailId: thread[1].id, text: "Hi again" });
+      const [thread] = await threadsOf(as);
+      expect(thread.messages).toHaveLength(2);
+      expect(thread.messages[1]).toMatchObject({ status: "failed" });
+      await as.action(api.mail.reply, {
+        emailId: thread.messages[1].id,
+        text: "Hi again",
+      });
       expect(sent()).toMatchObject({
         to: ["desk@example.org"],
         subject: "Re: Café",
@@ -356,6 +419,7 @@ describe("example", () => {
           References: "<first@example.org>",
         },
       });
+      expect((await threadsOf(as))[0].messages).toHaveLength(3);
     });
 
     test("a long thread still fits in Cloudflare's header limit", async () => {
@@ -366,8 +430,9 @@ describe("example", () => {
         t,
         `From: them@example.org\r\nSubject: Long\r\nMessage-ID: <last@example.org>\r\nReferences: ${ids.join(" ")}\r\n\r\nHi`,
       );
-      const [[message]] = await threadsOf(t);
-      await reply(t, { emailId: message.id, text: "Hi" });
+      const as = await signIn(t);
+      const [{ messages }] = await threadsOf(as);
+      await as.action(api.mail.reply, { emailId: messages[0].id, text: "Hi" });
       const references = sent().headers.References.split(" ");
       expect(references).toHaveLength(10);
       expect(references[0]).toBe("<m0@example.org>");
@@ -377,12 +442,360 @@ describe("example", () => {
     test("won't take an empty reply", async () => {
       const t = initConvexTest();
       await receive(t, first);
-      const [[message]] = await threadsOf(t);
-      const body = { emailId: message.id, text: "Hi" };
-      expect((await reply(t, { ...body, text: "  " })).status).toBe(400);
-      const threads = await threadsOf(t);
+      const as = await signIn(t);
+      const [{ messages }] = await threadsOf(as);
+      await expect(
+        as.action(api.mail.reply, { emailId: messages[0].id, text: "  " }),
+      ).rejects.toThrow("Write something");
+      expect((await threadsOf(as))[0].messages).toHaveLength(1);
+    });
+
+    test("read, archive and trash, and an answer brings an archived thread back", async () => {
+      const t = initConvexTest();
+      await receive(t, first);
+      const as = await signIn(t);
+      const [{ _id: threadId }] = await threadsOf(as);
+      await as.mutation(api.mail.setUnread, { threadId, unread: false });
+      await as.mutation(api.mail.move, { threadId, folder: "archive" });
+      expect(await threadsOf(as)).toEqual([]);
+      expect(await threadsOf(as, "archive")).toMatchObject([{ unread: false }]);
+
+      await receive(
+        t,
+        "From: them@example.org\r\nIn-Reply-To: <first@example.org>\r\n\r\nAnd?",
+      );
+      expect(await threadsOf(as)).toMatchObject([
+        { _id: threadId, unread: true, snippet: "And?" },
+      ]);
+
+      await as.mutation(api.mail.move, { threadId, folder: "trash" });
+      await receive(
+        t,
+        "From: them@example.org\r\nIn-Reply-To: <first@example.org>\r\n\r\nHello?",
+      );
+      expect(await threadsOf(as)).toEqual([]);
+      expect(await threadsOf(as, "trash")).toHaveLength(1);
+    });
+
+    test("new mail waits under Sent until they answer", async () => {
+      const sent = cloudflareSays();
+      const t = initConvexTest();
+      const as = await signIn(t);
+      const { threadId } = await as.action(api.mail.compose, {
+        from: "Support@example.com",
+        to: ["them@example.org"],
+        subject: "Hello",
+        text: "First",
+      });
+      expect(sent()).toMatchObject({
+        from: "Support@example.com",
+        to: ["them@example.org"],
+      });
+      expect(await threadsOf(as)).toEqual([]);
+      expect(await threadsOf(as, "sent")).toMatchObject([
+        { _id: threadId, with: "them@example.org", folder: "archive" },
+      ]);
+      await receive(
+        t,
+        "From: them@example.org\r\nIn-Reply-To: <ours@example.com>\r\n\r\nHi!",
+      );
+      expect(await threadsOf(as)).toMatchObject([{ _id: threadId }]);
+    });
+
+    test("sends attachments from storage and keeps them with the message", async () => {
+      const sent = cloudflareSays();
+      const t = initConvexTest();
+      await receive(t, first);
+      const as = await signIn(t);
+      const storageId = await t.run((ctx) =>
+        ctx.storage.store(new Blob(["hello file"], { type: "text/plain" })),
+      );
+      const [{ messages }] = await threadsOf(as);
+      await as.action(api.mail.reply, {
+        emailId: messages[0].id,
+        text: "See attached",
+        attachments: [
+          { storageId, filename: "a.txt", contentType: "text/plain" },
+        ],
+      });
+      expect(sent().attachments).toEqual([
+        {
+          content: btoa("hello file"),
+          filename: "a.txt",
+          type: "text/plain",
+          disposition: "attachment",
+        },
+      ]);
+      const [thread] = await threadsOf(as);
+      expect(thread.messages[1].attachments).toMatchObject([
+        { filename: "a.txt", size: 10, storageId },
+      ]);
+    });
+
+    test("won't send more than 10 MB of attachments", async () => {
+      cloudflareSays();
+      const t = initConvexTest();
+      const as = await signIn(t);
+      const storageId = await t.run((ctx) =>
+        ctx.storage.store(new Blob([new Uint8Array(10 * 1024 * 1024 + 1)])),
+      );
+      await expect(
+        as.action(api.mail.compose, {
+          from: "support@example.com",
+          to: ["them@example.org"],
+          subject: "Big",
+          text: "Too big",
+          attachments: [{ storageId, filename: "big.bin", contentType: "" }],
+        }),
+      ).rejects.toThrow("10 MB");
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    });
+
+    test("counts unread conversations in the Inbox", async () => {
+      const t = initConvexTest();
+      await receive(t, first);
+      await receive(t, "From: other@example.org\r\nSubject: New\r\n\r\nHi");
+      const as = await signIn(t);
+      expect(await as.query(api.mail.unreadCount)).toBe(2);
+      const [a, b] = await threadsOf(as);
+      await as.mutation(api.mail.setUnread, { threadId: a._id, unread: false });
+      expect(await as.query(api.mail.unreadCount)).toBe(1);
+      await as.mutation(api.mail.move, { threadId: b._id, folder: "archive" });
+      expect(await as.query(api.mail.unreadCount)).toBe(0);
+    });
+
+    test("searches, and lists only unread when asked", async () => {
+      const t = initConvexTest();
+      await receive(t, first);
+      await receive(
+        t,
+        "From: Grace <grace@example.org>\r\nSubject: Lunch\r\n\r\nNoon?",
+      );
+      const as = await signIn(t);
+      const subjects = async (args: {
+        search?: string;
+        unreadOnly?: boolean;
+      }) =>
+        (
+          await as.query(api.mail.threads, {
+            view: "inbox",
+            paginationOpts: page,
+            ...args,
+          })
+        ).page.map((thread) => thread.subject);
+      expect(await subjects({ search: "lunch" })).toEqual(["Lunch"]);
+      expect(await subjects({ search: "them@example.org" })).toEqual(["Café"]);
+      expect(await subjects({ search: "Hello" })).toEqual(["Café"]);
+      const [lunch] = await threadsOf(as);
+      await as.mutation(api.mail.setUnread, {
+        threadId: lunch._id,
+        unread: false,
+      });
+      expect(await subjects({ unreadOnly: true })).toEqual(["Café"]);
+      expect(await subjects({ search: "noon", unreadOnly: true })).toEqual([]);
+    });
+
+    test("Add inbox routes a new address and remembers its domain's zone", async () => {
+      vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          calls.push(`${init?.method ?? "GET"} ${url}`);
+          const result = url.endsWith("/email/routing")
+            ? { enabled: true }
+            : url.includes("rules?per_page")
+              ? [
+                  {
+                    id: "old",
+                    matchers: [{ type: "literal", value: "taken@example.com" }],
+                    actions: [{ type: "forward", value: ["me@else.com"] }],
+                  },
+                ]
+              : { id: "new" };
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true, result })),
+          );
+        }),
+      );
+      const t = initConvexTest();
+      const stranger = await signIn(t, "stranger@example.com");
+      await expect(
+        stranger.action(api.mail.addInbox, {
+          address: "hello@example.com",
+          zoneId: "zone",
+        }),
+      ).rejects.toThrow("Not on INBOX_USERS");
+      const as = await signIn(t);
+      await expect(
+        as.action(api.mail.addInbox, { address: "nope" }),
+      ).rejects.toThrow("isn't an email address");
+      await expect(
+        as.action(api.mail.addInbox, { address: "hello@example.com" }),
+      ).rejects.toThrow("Zone ID for example.com");
+      expect(calls).toEqual([]);
+
+      await as.action(api.mail.addInbox, {
+        address: " Hello@Example.com ",
+        zoneId: "zone",
+      });
+      expect(await as.query(api.mail.domains)).toEqual([
+        { domain: "example.com" },
+      ]);
+      calls.length = 0;
+      // The zone is remembered for the next address on the domain.
+      await as.action(api.mail.addInbox, { address: "sales@example.com" });
+      expect(calls).toContain(
+        "POST https://api.cloudflare.com/client/v4/zones/zone/email/routing/rules",
+      );
+      await expect(
+        as.action(api.mail.addInbox, { address: "taken@example.com" }),
+      ).rejects.toThrow("forwards to me@else.com");
+      expect(await as.query(api.mail.inboxes)).toEqual([
+        "hello@example.com",
+        "sales@example.com",
+      ]);
+    });
+
+    test("keeping a forward brings the address here and copies it on", async () => {
+      vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
+      const calls: { method: string; url: string; body?: unknown }[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          calls.push({ method: init?.method ?? "GET", url, body: init?.body });
+          const result = url.endsWith("/email/routing")
+            ? { enabled: true }
+            : url.includes("rules?per_page")
+              ? [
+                  {
+                    id: "old",
+                    matchers: [{ type: "literal", value: "taken@example.com" }],
+                    actions: [{ type: "forward", value: ["me@else.com"] }],
+                  },
+                ]
+              : { id: "new" };
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true, result })),
+          );
+        }),
+      );
+      const copyOfLastWorker = () => {
+        const upload = calls
+          .filter((c) => c.url.includes("/workers/scripts/"))
+          .at(-1)!;
+        const { bindings } = JSON.parse(
+          (upload.body as FormData).get("metadata") as string,
+        ) as { bindings: { name: string; text: string }[] };
+        return bindings.find((b) => b.name === "FORWARD_TO")?.text;
+      };
+      const t = initConvexTest();
+      const as = await signIn(t);
+      expect(
+        await as.action(api.mail.addInbox, {
+          address: "taken@example.com",
+          zoneId: "zone",
+          keepForwarding: true,
+        }),
+      ).toEqual({ copiedTo: "me@else.com" });
+      const put = calls.find(
+        (c) => c.method === "PUT" && c.url.endsWith("/email/routing/rules/old"),
+      )!;
+      expect(JSON.parse(put.body as string)).toMatchObject({
+        matchers: [{ value: "taken@example.com" }],
+        actions: [{ type: "worker", value: ["email-inbox-example-com"] }],
+      });
+      expect(copyOfLastWorker()).toBe("me@else.com");
+      expect(await as.query(api.mail.domains)).toEqual([
+        { domain: "example.com", forwardTo: "me@else.com" },
+      ]);
+      expect(await as.query(api.mail.inboxes)).toEqual(["taken@example.com"]);
+
+      // The next address on the domain keeps the copy going.
+      await as.action(api.mail.addInbox, { address: "new@example.com" });
+      expect(copyOfLastWorker()).toBe("me@else.com");
+    });
+
+    test("*@domain points the catch-all here and keeps its forward as a copy", async () => {
+      vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
+      // No `enabled`, which Cloudflare leaves out when it's the default, true.
+      let catchAll: unknown = {
+        matchers: [{ type: "all" }],
+        actions: [{ type: "forward", value: ["me@else.com"] }],
+      };
+      const puts: unknown[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          if (url.endsWith("/rules/catch_all") && init?.method === "PUT") {
+            catchAll = JSON.parse(init.body as string);
+            puts.push(catchAll);
+          }
+          const result = url.endsWith("/email/routing")
+            ? { enabled: true }
+            : url.endsWith("/rules/catch_all")
+              ? catchAll
+              : url.includes("rules?per_page")
+                ? []
+                : { id: "new" };
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true, result })),
+          );
+        }),
+      );
+      const t = initConvexTest();
+      const as = await signIn(t);
+      await expect(
+        as.action(api.mail.addInbox, {
+          address: "*@example.com",
+          zoneId: "zone",
+        }),
+      ).rejects.toThrow("forwards to me@else.com");
+      expect(puts).toEqual([]);
+
+      expect(
+        await as.action(api.mail.addInbox, {
+          address: "*@example.com",
+          keepForwarding: true,
+        }),
+      ).toEqual({ copiedTo: "me@else.com" });
+      expect(puts).toMatchObject([
+        {
+          matchers: [{ type: "all" }],
+          actions: [{ type: "worker", value: ["email-inbox-example-com"] }],
+        },
+      ]);
+      expect(await as.query(api.mail.domains)).toEqual([
+        { domain: "example.com", forwardTo: "me@else.com" },
+      ]);
+      // Its addresses become inboxes as their mail arrives, not before.
+      expect(await as.query(api.mail.inboxes)).toEqual([]);
+      // Once it comes here, running it again is harmless.
+      expect(
+        await as.action(api.mail.addInbox, { address: "*@example.com" }),
+      ).toEqual({});
+    });
+
+    test("backfill files mail from before the index, once", async () => {
+      const t = initConvexTest();
+      await t.mutation(components.cloudflareEmail.lib.receive, {
+        owner: "example",
+        payload: JSON.stringify({
+          from: "a@b.c",
+          to: "support@example.com",
+          text: "Old",
+        }),
+      });
+      await t.mutation(components.cloudflareEmail.lib.receive, {
+        owner: "someone-else",
+        payload: "{}",
+      });
+      await t.action(internal.mail.backfill, {});
+      await t.action(internal.mail.backfill, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const threads = await threadsOf(await signIn(t));
       expect(threads).toHaveLength(1);
-      expect(threads[0]).toHaveLength(1);
+      expect(threads[0].messages).toHaveLength(1);
     });
 
     test("setUpInbox routes each new address to one Worker", async () => {

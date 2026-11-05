@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
 import type * as example from "../example.js";
 import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
-import type * as inboxPage from "../inboxPage.js";
+import type * as mail from "../mail.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -20,10 +22,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
   example: typeof example;
   http: typeof http;
   inbox: typeof inbox;
-  inboxPage: typeof inboxPage;
+  mail: typeof mail;
+  users: typeof users;
 }>;
 
 /**
@@ -53,5 +57,8 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
+  auth: import("@convex-dev/auth/_generated/component.js").ComponentApi<"auth">;
+  authPassword: import("@convex-dev/auth/components/password/_generated/component.js").ComponentApi<"authPassword">;
+  authUsername: import("@convex-dev/auth/components/username/_generated/component.js").ComponentApi<"authUsername">;
   cloudflareEmail: import("@sarant/cloudflare-email-component/_generated/component.js").ComponentApi<"cloudflareEmail">;
 };
