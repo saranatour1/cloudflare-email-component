@@ -525,13 +525,34 @@ Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` with
 pnpm exec convex run example:send '{"email":{"from":"me@example.com","to":["you@example.com"],"subject":"Hi","text":"Hello"}}'
 ```
 
-The example also has a full inbox: a React app in `example/` with sign-in,
-threads, compose and reply, read/unread, Archive and Trash, kept attachments and
-live delivery status. Set `INBOUND_SECRET`, turn on Email Routing for the
-domain, and route each address to it:
+The example also has a full inbox: a React app in `example/`, laid out like
+shadcn/ui's [mail example](https://v3.shadcn.com/examples/mail), with sign-in,
+every inbox in one list, search, compose and reply with attachments,
+read/unread, Archive and Trash, and live delivery status.
+
+Mail reaches it only through an Email Routing rule that sends the address to the
+inbox Worker. Until an address's rule points at the Worker, its mail keeps going
+wherever the rule sent it before, and nothing shows up here. Set
+`INBOUND_SECRET`, turn on Email Routing for the domain, then add addresses with
+**Add inbox** at the bottom of the sidebar, or from the CLI:
 
 ```sh
 pnpm exec convex run inbox:setUpInbox '{"zoneId":"<zone id>","addresses":["support@example.com"]}'
+```
+
+That uploads one Worker per domain and creates a rule for each address that has
+none. An address that already has a rule is left alone, unless you tick **Keep
+forwarding a copy** (or pass `"keepForwarding":true`) and the rule forwards: the
+rule then points at the Worker, which keeps forwarding a copy where the mail
+went before, such as Gmail. Use `*@example.com` for the domain's catch-all rule,
+so every address without its own rule comes here, each as its own inbox.
+Changing a rule doesn't bring back mail it already delivered.
+
+If mail doesn't show up, this lists where each address goes and where the Worker
+posts:
+
+```sh
+pnpm exec convex run inbox:routingStatus '{"domain":"example.com"}'
 ```
 
 Sign-in uses [Convex Auth v2](https://auth-v2.previews.convex.dev) (beta) with

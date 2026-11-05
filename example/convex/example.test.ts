@@ -564,6 +564,218 @@ describe("example", () => {
       expect(await as.query(api.mail.unreadCount)).toBe(0);
     });
 
+    test("searches, and lists only unread when asked", async () => {
+      const t = initConvexTest();
+      await receive(t, first);
+      await receive(
+        t,
+        "From: Grace <grace@example.org>\r\nSubject: Lunch\r\n\r\nNoon?",
+      );
+      const as = await signIn(t);
+      const subjects = async (args: {
+        search?: string;
+        unreadOnly?: boolean;
+      }) =>
+        (
+          await as.query(api.mail.threads, {
+            view: "inbox",
+            paginationOpts: page,
+            ...args,
+          })
+        ).page.map((thread) => thread.subject);
+      expect(await subjects({ search: "lunch" })).toEqual(["Lunch"]);
+      expect(await subjects({ search: "them@example.org" })).toEqual(["Café"]);
+      expect(await subjects({ search: "Hello" })).toEqual(["Café"]);
+      const [lunch] = await threadsOf(as);
+      await as.mutation(api.mail.setUnread, {
+        threadId: lunch._id,
+        unread: false,
+      });
+      expect(await subjects({ unreadOnly: true })).toEqual(["Café"]);
+      expect(await subjects({ search: "noon", unreadOnly: true })).toEqual([]);
+    });
+
+    test("Add inbox routes a new address and remembers its domain's zone", async () => {
+      vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          calls.push(`${init?.method ?? "GET"} ${url}`);
+          const result = url.endsWith("/email/routing")
+            ? { enabled: true }
+            : url.includes("rules?per_page")
+              ? [
+                  {
+                    id: "old",
+                    matchers: [{ type: "literal", value: "taken@example.com" }],
+                    actions: [{ type: "forward", value: ["me@else.com"] }],
+                  },
+                ]
+              : { id: "new" };
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true, result })),
+          );
+        }),
+      );
+      const t = initConvexTest();
+      const stranger = await signIn(t, "stranger@example.com");
+      await expect(
+        stranger.action(api.mail.addInbox, {
+          address: "hello@example.com",
+          zoneId: "zone",
+        }),
+      ).rejects.toThrow("Not on INBOX_USERS");
+      const as = await signIn(t);
+      await expect(
+        as.action(api.mail.addInbox, { address: "nope" }),
+      ).rejects.toThrow("isn't an email address");
+      await expect(
+        as.action(api.mail.addInbox, { address: "hello@example.com" }),
+      ).rejects.toThrow("Zone ID for example.com");
+      expect(calls).toEqual([]);
+
+      await as.action(api.mail.addInbox, {
+        address: " Hello@Example.com ",
+        zoneId: "zone",
+      });
+      expect(await as.query(api.mail.domains)).toEqual([
+        { domain: "example.com" },
+      ]);
+      calls.length = 0;
+      // The zone is remembered for the next address on the domain.
+      await as.action(api.mail.addInbox, { address: "sales@example.com" });
+      expect(calls).toContain(
+        "POST https://api.cloudflare.com/client/v4/zones/zone/email/routing/rules",
+      );
+      await expect(
+        as.action(api.mail.addInbox, { address: "taken@example.com" }),
+      ).rejects.toThrow("forwards to me@else.com");
+      expect(await as.query(api.mail.inboxes)).toEqual([
+        "hello@example.com",
+        "sales@example.com",
+      ]);
+    });
+
+    test("keeping a forward brings the address here and copies it on", async () => {
+      vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
+      const calls: { method: string; url: string; body?: unknown }[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          calls.push({ method: init?.method ?? "GET", url, body: init?.body });
+          const result = url.endsWith("/email/routing")
+            ? { enabled: true }
+            : url.includes("rules?per_page")
+              ? [
+                  {
+                    id: "old",
+                    matchers: [{ type: "literal", value: "taken@example.com" }],
+                    actions: [{ type: "forward", value: ["me@else.com"] }],
+                  },
+                ]
+              : { id: "new" };
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true, result })),
+          );
+        }),
+      );
+      const copyOfLastWorker = () => {
+        const upload = calls
+          .filter((c) => c.url.includes("/workers/scripts/"))
+          .at(-1)!;
+        const { bindings } = JSON.parse(
+          (upload.body as FormData).get("metadata") as string,
+        ) as { bindings: { name: string; text: string }[] };
+        return bindings.find((b) => b.name === "FORWARD_TO")?.text;
+      };
+      const t = initConvexTest();
+      const as = await signIn(t);
+      expect(
+        await as.action(api.mail.addInbox, {
+          address: "taken@example.com",
+          zoneId: "zone",
+          keepForwarding: true,
+        }),
+      ).toEqual({ copiedTo: "me@else.com" });
+      const put = calls.find(
+        (c) => c.method === "PUT" && c.url.endsWith("/email/routing/rules/old"),
+      )!;
+      expect(JSON.parse(put.body as string)).toMatchObject({
+        matchers: [{ value: "taken@example.com" }],
+        actions: [{ type: "worker", value: ["email-inbox-example-com"] }],
+      });
+      expect(copyOfLastWorker()).toBe("me@else.com");
+      expect(await as.query(api.mail.domains)).toEqual([
+        { domain: "example.com", forwardTo: "me@else.com" },
+      ]);
+      expect(await as.query(api.mail.inboxes)).toEqual(["taken@example.com"]);
+
+      // The next address on the domain keeps the copy going.
+      await as.action(api.mail.addInbox, { address: "new@example.com" });
+      expect(copyOfLastWorker()).toBe("me@else.com");
+    });
+
+    test("*@domain points the catch-all here and keeps its forward as a copy", async () => {
+      vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
+      // No `enabled`, which Cloudflare leaves out when it's the default, true.
+      let catchAll: unknown = {
+        matchers: [{ type: "all" }],
+        actions: [{ type: "forward", value: ["me@else.com"] }],
+      };
+      const puts: unknown[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          if (url.endsWith("/rules/catch_all") && init?.method === "PUT") {
+            catchAll = JSON.parse(init.body as string);
+            puts.push(catchAll);
+          }
+          const result = url.endsWith("/email/routing")
+            ? { enabled: true }
+            : url.endsWith("/rules/catch_all")
+              ? catchAll
+              : url.includes("rules?per_page")
+                ? []
+                : { id: "new" };
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true, result })),
+          );
+        }),
+      );
+      const t = initConvexTest();
+      const as = await signIn(t);
+      await expect(
+        as.action(api.mail.addInbox, {
+          address: "*@example.com",
+          zoneId: "zone",
+        }),
+      ).rejects.toThrow("forwards to me@else.com");
+      expect(puts).toEqual([]);
+
+      expect(
+        await as.action(api.mail.addInbox, {
+          address: "*@example.com",
+          keepForwarding: true,
+        }),
+      ).toEqual({ copiedTo: "me@else.com" });
+      expect(puts).toMatchObject([
+        {
+          matchers: [{ type: "all" }],
+          actions: [{ type: "worker", value: ["email-inbox-example-com"] }],
+        },
+      ]);
+      expect(await as.query(api.mail.domains)).toEqual([
+        { domain: "example.com", forwardTo: "me@else.com" },
+      ]);
+      // Its addresses become inboxes as their mail arrives, not before.
+      expect(await as.query(api.mail.inboxes)).toEqual([]);
+      // Once it comes here, running it again is harmless.
+      expect(
+        await as.action(api.mail.addInbox, { address: "*@example.com" }),
+      ).toEqual({});
+    });
+
     test("backfill files mail from before the index, once", async () => {
       const t = initConvexTest();
       await t.mutation(components.cloudflareEmail.lib.receive, {

@@ -6,6 +6,13 @@ import { api } from "../convex/_generated/api";
 import { App } from "./App";
 import "./index.css";
 
+// shadcn's theme switches on a .dark class, so follow the system setting.
+const dark = matchMedia("(prefers-color-scheme: dark)");
+const followTheme = () =>
+  document.documentElement.classList.toggle("dark", dark.matches);
+followTheme();
+dark.addEventListener("change", followTheme);
+
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
 createRoot(document.getElementById("root")!).render(

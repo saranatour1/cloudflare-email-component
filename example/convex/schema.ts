@@ -34,12 +34,18 @@ export default defineSchema({
     unread: v.boolean(),
     // Whether we've written in it, which puts it under Sent.
     sent: v.boolean(),
+    // What search looks in. Optional only for threads filed before search existed.
+    search: v.optional(v.string()),
   })
     .index("by_folder_and_lastAt", ["folder", "lastAt"])
     .index("by_folder_and_unread", ["folder", "unread"])
     .index("by_inbox_and_folder_and_lastAt", ["inbox", "folder", "lastAt"])
     .index("by_sent_and_lastAt", ["sent", "lastAt"])
-    .index("by_inbox_and_sent_and_lastAt", ["inbox", "sent", "lastAt"]),
+    .index("by_inbox_and_sent_and_lastAt", ["inbox", "sent", "lastAt"])
+    .searchIndex("search_search", {
+      searchField: "search",
+      filterFields: ["folder", "inbox", "sent", "unread"],
+    }),
   messages: defineTable({
     threadId: v.id("threads"),
     // The component's email, which holds the message itself.
@@ -54,4 +60,11 @@ export default defineSchema({
   inboxes: defineTable({ address: v.string() }).index("by_address", [
     "address",
   ]),
+  // The Cloudflare zone of each domain with an inbox, for adding more addresses.
+  domains: defineTable({
+    domain: v.string(),
+    zoneId: v.string(),
+    // Where the domain's Worker also forwards each email, if anywhere.
+    forwardTo: v.optional(v.string()),
+  }).index("by_domain", ["domain"]),
 });

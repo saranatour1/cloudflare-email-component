@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-- The example is now a full inbox: a React app in `example/` with Convex Auth
-  sign-in limited to `INBOX_USERS`, threads, compose and reply with attachments,
-  read/unread, Archive and Trash, and live delivery status. It replaces the
-  unauthenticated `/inbox` page. The package itself is unchanged.
+- The example is now a full inbox: a React app in `example/`, laid out like
+  shadcn/ui's mail example, with Convex Auth sign-in limited to `INBOX_USERS`,
+  every inbox in one list, search, compose and reply with attachments,
+  read/unread, Archive and Trash, and live delivery status. **Add inbox** routes
+  new addresses or a domain's catch-all to it, and can keep forwarding a copy to
+  where the mail went before. It replaces the unauthenticated `/inbox` page. The
+  package itself is unchanged.
 
 ## 0.2.2
 

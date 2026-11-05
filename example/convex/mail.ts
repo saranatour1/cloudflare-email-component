@@ -11,11 +11,12 @@ import {
   internalQuery,
   type MutationCtx,
   mutation,
+  type QueryCtx,
   query,
 } from "./_generated/server.js";
 import { currentUser, requireUser } from "./auth.js";
 import { deliver } from "./example.js";
-import { toMessage } from "./inbox.js";
+import { routeAddresses, toMessage } from "./inbox.js";
 import { vAttachment, vFolder } from "./schema.js";
 
 const owner = "example";
@@ -52,10 +53,17 @@ const file = async (
     snippet: m.text.replace(/\s+/g, " ").trim().slice(0, 160),
     lastAt: m.at,
   };
+  // ponytail: search covers the subject, the people and the latest message, not
+  // every message. Index each message's text too if older ones need finding.
+  const searchOf = (subject: string) =>
+    [subject, latest.with, m.from, ...m.to, latest.snippet].join(" ");
   const thread = threadId && (await ctx.db.get("threads", threadId));
   if (thread) {
     await ctx.db.patch("threads", thread._id, {
-      ...(m.at >= thread.lastAt && latest),
+      ...(m.at >= thread.lastAt && {
+        ...latest,
+        search: searchOf(thread.subject),
+      }),
       unread: thread.unread || inbound,
       sent: thread.sent || !inbound,
       // An answer brings an archived conversation back. Trash stays trash.
@@ -66,6 +74,7 @@ const file = async (
       inbox: m.inbox,
       subject: m.subject,
       ...latest,
+      search: searchOf(m.subject),
       // Something we started waits under Sent until they answer.
       folder: inbound ? "inbox" : "archive",
       unread: inbound,
@@ -78,12 +87,16 @@ const file = async (
     messageId: m.messageId,
     attachments,
   });
-  const inbox = await ctx.db
-    .query("inboxes")
-    .withIndex("by_address", (q) => q.eq("address", m.inbox))
-    .unique();
-  if (!inbox) await ctx.db.insert("inboxes", { address: m.inbox });
+  await noteInbox(ctx, m.inbox);
   return threadId!;
+};
+
+const noteInbox = async (ctx: MutationCtx, address: string) => {
+  const known = await ctx.db
+    .query("inboxes")
+    .withIndex("by_address", (q) => q.eq("address", address))
+    .unique();
+  if (!known) await ctx.db.insert("inboxes", { address });
 };
 
 export const receive = internalMutation({
@@ -122,11 +135,25 @@ export const threads = query({
   args: {
     view: v.union(vFolder, v.literal("sent")),
     inbox: v.optional(v.string()),
+    unreadOnly: v.optional(v.boolean()),
+    search: v.optional(v.string()),
     paginationOpts: paginationOptsValidator,
   },
-  handler: async (ctx, { view, inbox, paginationOpts }) => {
+  handler: async (ctx, { view, inbox, unreadOnly, search, paginationOpts }) => {
     await requireUser(ctx);
     const threads = ctx.db.query("threads");
+    // Best match first while searching, newest first otherwise.
+    if (search?.trim())
+      return await threads
+        .withSearchIndex("search_search", (q) => {
+          const inView =
+            view === "sent"
+              ? q.search("search", search).eq("sent", true)
+              : q.search("search", search).eq("folder", view);
+          const inInbox = inbox ? inView.eq("inbox", inbox) : inView;
+          return unreadOnly ? inInbox.eq("unread", true) : inInbox;
+        })
+        .paginate(paginationOpts);
     const ordered =
       view === "sent"
         ? inbox
@@ -141,7 +168,15 @@ export const threads = query({
           : threads.withIndex("by_folder_and_lastAt", (q) =>
               q.eq("folder", view),
             );
-    return await ordered.order("desc").paginate(paginationOpts);
+    return await (
+      unreadOnly
+        ? // ponytail: skips read threads to fill a page, add unread to these
+          // indexes if a mailbox has many read ones.
+          ordered.filter((q) => q.eq(q.field("unread"), true))
+        : ordered
+    )
+      .order("desc")
+      .paginate(paginationOpts);
   },
 });
 
@@ -213,6 +248,80 @@ export const setUnread = mutation({
   handler: async (ctx, { threadId, unread }) => {
     await requireUser(ctx);
     await ctx.db.patch("threads", threadId, { unread });
+  },
+});
+
+export const domains = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx);
+    return (await ctx.db.query("domains").take(100)).map(
+      ({ domain, forwardTo }) => ({ domain, forwardTo }),
+    );
+  },
+});
+
+const domainRow = (ctx: QueryCtx, domain: string) =>
+  ctx.db
+    .query("domains")
+    .withIndex("by_domain", (q) => q.eq("domain", domain))
+    .unique();
+
+export const domainOf = internalQuery({
+  args: { domain: v.string() },
+  handler: async (ctx, { domain }) => {
+    const row = await domainRow(ctx, domain);
+    return row && { zoneId: row.zoneId, forwardTo: row.forwardTo };
+  },
+});
+
+export const noteRouted = internalMutation({
+  args: {
+    domain: v.string(),
+    zoneId: v.string(),
+    forwardTo: v.optional(v.string()),
+    addresses: v.array(v.string()),
+  },
+  handler: async (ctx, { domain, zoneId, forwardTo, addresses }) => {
+    const known = await domainRow(ctx, domain);
+    if (!known) await ctx.db.insert("domains", { domain, zoneId, forwardTo });
+    else await ctx.db.patch("domains", known._id, { zoneId, forwardTo });
+    for (const address of addresses)
+      await noteInbox(ctx, address.toLowerCase());
+  },
+});
+
+/** Routes a new address here, so its mail shows up with the rest. */
+export const addInbox = action({
+  args: {
+    address: v.string(),
+    zoneId: v.optional(v.string()),
+    keepForwarding: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.runQuery(internal.mail.allowed, {});
+    const address = args.address.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))
+      throw new ConvexError("That isn't an email address.");
+    const domain = address.split("@")[1]!;
+    const zoneId: string | null =
+      args.zoneId?.trim() ||
+      (await ctx.runQuery(internal.mail.domainOf, { domain }))?.zoneId ||
+      null;
+    if (!zoneId)
+      throw new ConvexError(`Add the Zone ID for ${domain}, needed only once.`);
+    const {
+      rules: [rule],
+    } = await routeAddresses(ctx, zoneId, [address], {
+      keepForwarding: args.keepForwarding,
+    });
+    if (rule?.alreadyRouted)
+      throw new ConvexError(
+        rule.forwardsTo
+          ? `${address} forwards to ${rule.forwardsTo}. Tick "Keep forwarding a copy" to bring it here too.`
+          : `${address} already goes to another Worker. Change it in Cloudflare first, or pick another address.`,
+      );
+    return { copiedTo: rule?.tookOver ? rule.forwardsTo : undefined };
   },
 });
 
