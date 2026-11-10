@@ -28,7 +28,7 @@
   "scripts": {
     "dev": "convex dev --start 'pnpm run dev:build'",
     "dev:example": "vp dev example",
-    "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'pnpm run build:codegen' --initial",
+    "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -i 'src/component/_generated/**' -c 'pnpm run build:codegen' --initial",
     "predev": "convex init && pnpm run build:codegen",
     "build": "tsc --project ./tsconfig.build.json",
     "build:codegen": "convex codegen --component-dir ./src/component && vp fmt src/component/_generated && pnpm run build",
@@ -113,5 +113,5 @@
   },
   "types": "./dist/client/index.d.ts",
   "module": "./dist/client/index.js",
-  "packageManager": "pnpm@12.6.0"
+  "packageManager": "pnpm@12.18.0"
 }
