@@ -37,6 +37,16 @@ Fixes:
   fails too. Before, nobody got the message and the sender wasn't told. Upload
   the Worker again with `uploadWorker` to pick this up.
 
+Docs:
+
+- The README and API docs said Cloudflare tries inbound mail again when your
+  handler throws, or before one is set. It doesn't. Cloudflare answers the
+  sending server with a permanent `521 5.3.0 Upstream error`, so the message
+  bounces back to its sender. The docs now say so. Delivery events are tried
+  again, as before.
+- The docs now say how events are matched to emails: by Message-ID, with the
+  angle brackets removed.
+
 ## 0.2.2
 
 - First version published from GitHub Actions with trusted publishing, so npm

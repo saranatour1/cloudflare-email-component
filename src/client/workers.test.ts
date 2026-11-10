@@ -89,7 +89,7 @@ describe("inboundWorker", () => {
     expect(m.forward).toHaveBeenCalledWith("me@else.com");
   });
 
-  test("anything else throws, so Cloudflare tries again", async () => {
+  test("anything else throws, so the message bounces to its sender", async () => {
     answers(500);
     const m = message();
     await expect(load(inboundWorker).email(m, env)).rejects.toThrow("500");

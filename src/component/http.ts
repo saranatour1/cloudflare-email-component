@@ -45,12 +45,14 @@ const route = <K extends "onReceive" | "onEvents">(
       if (!(await authorized(req, env[secret])))
         return reply(401, "Unauthorized");
       const handler = (await ctx.runQuery(internal.lib.handlers, {}))?.[key];
-      if (!handler) return reply(503, `No ${key} handler set`); // Cloudflare retries later
+      // Queues tries events again. Mail isn't tried again: it bounces to its sender.
+      if (!handler) return reply(503, `No ${key} handler set`);
       return run(ctx, req, handler);
     }),
   });
 
-// 403 turns the message away for good; any other failure has Cloudflare retry it.
+// 403 turns the message away with our own reason. Any other failure makes the
+// Worker throw, which Cloudflare answers with a permanent 521: the mail bounces.
 route(
   "/inbound",
   "INBOUND_SECRET",
