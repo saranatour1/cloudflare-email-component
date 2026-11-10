@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - The example is now a full inbox: a React app in `example/`, laid out like
   shadcn/ui's mail example, with Convex Auth sign-in limited to `INBOX_USERS`,
