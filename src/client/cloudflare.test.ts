@@ -53,7 +53,16 @@ describe("ruleFor", () => {
     actions: [{ type: "forward", value: ["you@example.com"] }],
     ...over,
   });
-  const path = "/zones/z/email/routing/rules?per_page=50";
+  const pageOf = (page: number) =>
+    `/zones/z/email/routing/rules?per_page=50&page=${page}`;
+  const path = pageOf(1);
+  const others = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      rule({
+        id: `other-${i}`,
+        matchers: [{ type: "literal", value: `other${i}@example.com` }],
+      }),
+    );
 
   test("matches the address whatever its case, and reports the forward", async () => {
     route({ [path]: [rule({})] });
@@ -65,6 +74,31 @@ describe("ruleFor", () => {
   test("ignores a disabled rule", async () => {
     route({ [path]: [rule({ enabled: false })] });
     expect(await ruleFor("z", "t", "me@example.com")).toBeUndefined();
+  });
+  test("looks past the first page of 50", async () => {
+    route({ [pageOf(1)]: others(50), [pageOf(2)]: [rule({})] });
+    expect(await ruleFor("z", "t", "me@example.com")).toMatchObject({
+      id: "r",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  test("stops at a short page", async () => {
+    route({ [path]: others(3) });
+    expect(await ruleFor("z", "t", "me@example.com")).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  test("throws if the lookup fails, as that doesn't mean there's no rule", async () => {
+    route({});
+    await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow("no");
+    // The second page failing counts too: the rule could be on it.
+    route({ [pageOf(1)]: others(50) });
+    await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow("no");
+  });
+  test("throws on an answer that isn't a list", async () => {
+    route({ [path]: { id: "not a list" } });
+    await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow(
+      "didn't list",
+    );
   });
 });
 
@@ -142,6 +176,16 @@ describe("suppressions", () => {
     expect(called().path).toBe(
       `${path}?scope_type=sending_domain&scope_value=mail.example.com`,
     );
+  });
+
+  test("leaves out a filter that's set to undefined", async () => {
+    route({ [`${path}?reason=manual`]: [] });
+    const maybe: { email?: string } = {};
+    await listSuppressions("acc", "t", {
+      email: maybe.email,
+      reason: "manual",
+    });
+    expect(called().path).toBe(`${path}?reason=manual`);
   });
 
   test("adds one for a single sending domain", async () => {
@@ -267,6 +311,28 @@ describe("setUpDeliveryEvents", () => {
       ["DELETE", "/accounts/acc/queues/id-events-dlq"],
       ["DELETE", "/accounts/acc/workers/scripts/events"],
     ]);
+  });
+
+  test("leaves an existing Worker alone if it fails before uploading one", async () => {
+    // Running setup again for the same domain: the queue's name is taken.
+    answering("/accounts/acc/queues");
+    await expect(setUpDeliveryEvents("acc", "t", options)).rejects.toThrow(
+      "not allowed",
+    );
+    expect(calls()).toEqual([["POST", "/accounts/acc/queues"]]);
+  });
+
+  test("throws why it failed, even if taking it down fails too", async () => {
+    answering(subscriptions);
+    const failing = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      init!.method === "DELETE"
+        ? Promise.reject(new Error("network down"))
+        : failing(url, init),
+    );
+    await expect(setUpDeliveryEvents("acc", "t", options)).rejects.toThrow(
+      "not allowed",
+    );
   });
 
   test("removeDeliveryEvents starts with the subscription", async () => {

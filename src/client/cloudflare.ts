@@ -62,7 +62,12 @@ export const inboundWorker = `export default {
     if (!res.ok && res.status !== 403)
       throw new Error("The app didn't take the message: " + res.status)
     if (env.FORWARD_TO)
-      await message.forward(env.FORWARD_TO).catch((e) => console.error("Forward failed: " + e))
+      await message.forward(env.FORWARD_TO).catch((e) => {
+        console.error("Forward failed: " + e)
+        // The app turned it away too, so nobody has it. Say so, or it vanishes.
+        if (res.status === 403)
+          message.setReject("This address isn't accepting mail right now.")
+      })
   },
 }
 `;
@@ -135,24 +140,37 @@ type Rule = {
   actions?: { type?: string; value?: string[] }[];
 };
 
+const rulesPerPage = 50;
+// Well past the rules a zone can have, so a bad answer can't loop forever.
+const maxRulePages = 20;
+
 export const ruleFor = async (
   zoneId: string,
   token: string,
   address: string,
 ) => {
-  const rules = (await call(
-    `/zones/${zoneId}/email/routing/rules?per_page=50`,
-    token,
-  )) as Rule[] | undefined;
-  const found = rules?.find(
-    (r) =>
-      r.enabled !== false &&
-      r.matchers?.some(
-        (m) =>
-          m.type === "literal" &&
-          m.value?.toLowerCase() === address.toLowerCase(),
-      ),
-  );
+  const matches = (r: Rule) =>
+    r.enabled !== false &&
+    r.matchers?.some(
+      (m) =>
+        m.type === "literal" &&
+        m.value?.toLowerCase() === address.toLowerCase(),
+    );
+  // Cloudflare lists 50 rules a page. Stopping at the first page would miss a
+  // rule further on, and the caller would then route the address a second time.
+  let found: Rule | undefined;
+  for (let page = 1; page <= maxRulePages && !found; page++) {
+    const { result } = await must(
+      `/zones/${zoneId}/email/routing/rules?per_page=${rulesPerPage}&page=${page}`,
+      token,
+    );
+    // "No rule" has to be Cloudflare's answer. Reading a failed lookup as none
+    // would have the caller add a second rule, which never runs.
+    if (!Array.isArray(result))
+      throw new Error("Cloudflare didn't list the routing rules.");
+    found = (result as Rule[]).find(matches);
+    if (result.length < rulesPerPage) break;
+  }
   return (
     found && {
       id: found.id,
@@ -234,8 +252,11 @@ export const listSuppressions = async (
     cursor?: string;
   } = {},
 ) => {
+  // An unset filter is left out. As text it would be "undefined", which matches nothing.
   const query = new URLSearchParams(
-    Object.entries(filter).map(([key, value]) => [key, String(value)]),
+    Object.entries(filter)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, String(value)]),
   );
   const body = await must(suppressions(accountId, `?${query}`), token);
   return {
@@ -286,10 +307,10 @@ type DeliveryEventsSetup = {
   subscriptionId?: string;
 };
 
-export const removeDeliveryEvents = async (
+const takeDown = async (
   accountId: string,
   token: string,
-  name: string,
+  worker: string | undefined,
   { queueId, deadLetterQueueId, subscriptionId }: DeliveryEventsSetup,
 ) => {
   if (subscriptionId)
@@ -299,8 +320,16 @@ export const removeDeliveryEvents = async (
     );
   for (const id of [queueId, deadLetterQueueId])
     if (id) await remove(`/accounts/${accountId}/queues/${id}`, token);
-  await remove(`/accounts/${accountId}/workers/scripts/${name}`, token);
+  if (worker)
+    await remove(`/accounts/${accountId}/workers/scripts/${worker}`, token);
 };
+
+export const removeDeliveryEvents = (
+  accountId: string,
+  token: string,
+  name: string,
+  setup: DeliveryEventsSetup,
+) => takeDown(accountId, token, name, setup);
 
 export const setUpDeliveryEvents = async (
   accountId: string,
@@ -321,6 +350,9 @@ export const setUpDeliveryEvents = async (
 ) => {
   const queues = `/accounts/${accountId}/queues`;
   const setup: DeliveryEventsSetup = {};
+  // Set once this run has uploaded the Worker, so a failure before that leaves a
+  // Worker of the same name, such as one from an earlier setup, where it is.
+  let uploaded = false;
   const create = async (path: string, body: unknown) =>
     (await must(path, token, json("POST", body))).result as {
       id: string;
@@ -335,6 +367,7 @@ export const setUpDeliveryEvents = async (
       EVENTS_URL: eventsUrl,
       SECRET: secret,
     });
+    uploaded = true;
     await create(`${queues}/${setup.queueId}/consumers`, {
       type: "worker",
       script_name: name,
@@ -359,7 +392,10 @@ export const setUpDeliveryEvents = async (
     ).id;
     return setup as Required<DeliveryEventsSetup>;
   } catch (cause) {
-    await removeDeliveryEvents(accountId, token, name, setup);
+    // A failed cleanup mustn't hide why the setup failed.
+    await takeDown(accountId, token, uploaded ? name : undefined, setup).catch(
+      () => undefined,
+    );
     throw cause;
   }
 };

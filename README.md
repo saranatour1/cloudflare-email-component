@@ -358,7 +358,9 @@ export const onEvents = internalAction({
 - Each email gets a `delivery` field with the worst outcome among its
   recipients: `deferred`, `delivered`, then `failed`, `rejected` or `bounced`,
   then `complained`. `events.list` gives the history for one email.
-- Events are matched to emails by owner and Message-ID. An event for mail the
+- Events are matched to emails by owner and Message-ID. Cloudflare returns the
+  ID from a send in angle brackets, and an event can carry it without them, so
+  the two are compared with the brackets removed. An event for mail the
   component didn't send still reaches your handler, then is dropped after an
   hour.
 
@@ -375,7 +377,9 @@ await ctx.runMutation(components.cloudflareEmail.lib.setHandlers, {
 
 Each handler is optional, and `setHandlers` changes only what you pass. A
 handler with the wrong arguments is a type error. Until a handler is set, its
-route answers 503, so Cloudflare keeps the mail or events and tries again.
+route answers 503. Queues keeps the events and tries again. Mail isn't kept: it
+bounces back to its sender, so set `onReceive` before you route an address to
+the Worker.
 
 ## Receiving
 
@@ -453,7 +457,11 @@ export const receive = internalAction({
 - Messages over 15 MiB are turned away before they reach you. What you store
   must fit in a 1 MiB document, so trim it: keep the text and drop attachments
   or store them in file storage.
-- If the handler throws, Cloudflare tries again later.
+- If the handler throws, the message isn't tried again. The Worker fails, and
+  Cloudflare answers the sending server with a permanent error,
+  `521 5.3.0 Upstream error`, so the message bounces back to its sender. The
+  same happens while your deployment can't be reached, and a `forwardTo` copy
+  isn't sent either. Cloudflare doesn't document this. It's what senders report.
 - To check authentication, read the first `Authentication-Results` header of the
   raw message, and trust it only if it comes from `mx.cloudflare.net`. Later
   ones may come from the sender.
@@ -483,6 +491,9 @@ What this component chooses, and what that costs you:
   no idempotency key and a retry could send the same email twice. For guaranteed
   delivery after a timeout, queue sends yourself, for example with
   `@convex-dev/workpool`, and accept that a rare email may go out twice.
+- **Inbound mail is bounced, not queued.** The Worker hands each message
+  straight to your deployment. If that fails, the sender gets a bounce and has
+  to send again. Nothing holds the message for a retry.
 - **Attachments aren't stored.** They'd quickly exceed the 1 MiB document limit.
   Keep files in Convex file storage and attach them at send time.
 

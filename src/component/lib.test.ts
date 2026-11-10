@@ -51,6 +51,28 @@ describe("send", () => {
     expect(await send()).toMatchObject({ messageId: "<a@b>" });
   });
 
+  // The mail went out, so an answer shaped differently mustn't turn into a throw.
+  it.each([
+    ["a null list", { message_id: "<a@b>", delivered: email.to, queued: null }],
+    [
+      "a list with a non-address",
+      { message_id: "<a@b>", delivered: [...email.to, 5] },
+    ],
+  ])("still reports a sent email given %s", async (_name, result) => {
+    fetchMock.mockResolvedValueOnce(accepted(result));
+    expect(await send()).toMatchObject({
+      messageId: "<a@b>",
+      delivered: email.to,
+    });
+  });
+
+  it("leaves out a Message-ID that isn't text", async () => {
+    fetchMock.mockResolvedValueOnce(
+      accepted({ message_id: 5, delivered: email.to }),
+    );
+    expect(await send()).toEqual({ delivered: email.to });
+  });
+
   it("counts a queued address as sent", async () => {
     fetchMock.mockResolvedValueOnce(
       accepted({ message_id: "<a@b>", queued: email.to }),
@@ -247,4 +269,70 @@ describe("queue", () => {
       "sent",
     );
   });
+});
+
+describe("markResult", () => {
+  it("does nothing for an email removed while it was sending", async () => {
+    const t = initConvexTest();
+    const emailId = await t.mutation(api.lib.queue, {
+      owner: "me",
+      payload: "sealed",
+    });
+    await t.mutation(api.lib.remove, { emailId, owner: "me" });
+    await expect(
+      t.mutation(api.lib.markResult, { emailId, failed: false }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("reseal", () => {
+  it("keeps the error when only the payload is passed", async () => {
+    const t = initConvexTest();
+    const emailId = await t.mutation(api.lib.queue, {
+      owner: "me",
+      payload: "sealed",
+    });
+    await t.mutation(api.lib.markResult, {
+      emailId,
+      failed: true,
+      error: "sealed error",
+    });
+    await t.mutation(api.lib.reseal, {
+      emailId,
+      from: "sealed",
+      payload: "new",
+    });
+    expect(await t.query(api.lib.get, { emailId })).toMatchObject({
+      payload: "new",
+      error: "sealed error",
+    });
+    await t.mutation(api.lib.reseal, {
+      emailId,
+      from: "new",
+      payload: "newer",
+      error: "resealed error",
+    });
+    expect(await t.query(api.lib.get, { emailId })).toMatchObject({
+      payload: "newer",
+      error: "resealed error",
+    });
+  });
+});
+
+describe("removeOwner", () => {
+  it.each([0, -3, 0.5])(
+    "deletes at least one a call given a limit of %d",
+    async (limit) => {
+      const t = initConvexTest();
+      for (let i = 0; i < 2; i++)
+        await t.mutation(api.lib.queue, { owner: "me", payload: "sealed" });
+      // A caller loops until this is false, so a call that deletes nothing never ends.
+      expect(
+        await t.mutation(api.lib.removeOwner, { owner: "me", limit }),
+      ).toBe(true);
+      expect(
+        await t.mutation(api.lib.removeOwner, { owner: "me", limit }),
+      ).toBe(false);
+    },
+  );
 });

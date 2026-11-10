@@ -102,7 +102,9 @@ export const markResult = mutation({
   returns: v.null(),
   handler: async (ctx, { emailId, failed, payload, error, messageId }) => {
     const email = await ctx.db.get("emails", emailId);
-    if (!email) throw new Error("That email isn't here anymore");
+    // Removed while it was sending. Throwing would make `sendEmail` fail after the
+    // mail went out, and a caller that retries would send it twice.
+    if (!email) return null;
     const key = messageId && messageIdKey(messageId);
     await ctx.db.patch("emails", emailId, {
       status: failed ? "failed" : "sent",
@@ -188,8 +190,12 @@ export const reseal = mutation({
   returns: v.null(),
   handler: async (ctx, { emailId, from, payload, error }) => {
     const email = await ctx.db.get("emails", emailId);
+    // Patching `error: undefined` would delete it, so it's only replaced when passed.
     if (email?.payload === from)
-      await ctx.db.patch("emails", emailId, { payload, error });
+      await ctx.db.patch("emails", emailId, {
+        payload,
+        ...(error !== undefined && { error }),
+      });
     return null;
   },
 });
@@ -209,7 +215,9 @@ export const remove = mutation({
 export const removeOwner = mutation({
   args: { owner: v.string(), limit: v.optional(v.number()) },
   returns: v.boolean(),
-  handler: async (ctx, { owner, limit = 500 }) => {
+  handler: async (ctx, { owner, ...args }) => {
+    // At least one, or a caller looping until this returns false would never finish.
+    const limit = Math.max(1, Math.floor(args.limit ?? 500));
     const emails = await ctx.db
       .query("emails")
       .withIndex("by_owner_and_direction", (q) => q.eq("owner", owner))

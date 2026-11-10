@@ -123,7 +123,10 @@ in total. `content` is base64, and a message can be up to 25 MiB.
 One Cloudflare event for one recipient. `type` is
 `cf.email.sending.message.{delivered,deferred,bounced,failed,rejected,complained}`,
 and `payload` carries `eventId`, `messageId` and `recipient`, plus optional
-`subject`, `bounce`, `failure`, `rejection` and `complaint` details.
+`subject`, `bounce`, `failure`, `rejection` and `complaint` details. `messageId`
+is the ID `sendEmail` returned. Cloudflare returns it from a send in angle
+brackets and an event can carry it without them, so the component compares the
+two with the brackets removed.
 
 ### `Suppression`
 
@@ -208,8 +211,11 @@ the routes mounted, that's `${CONVEX_SITE_URL}/email/inbound` and
 
 - 2xx: the message is taken.
 - 403: the message is rejected, unless there's a `forwardTo` address, which
-  still gets it.
-- Anything else: Cloudflare tries again later.
+  still gets it. If that forward fails too, the message is rejected.
+- Anything else: the Worker throws, and the message isn't tried again.
+  Cloudflare answers the sending server with a permanent error,
+  `521 5.3.0 Upstream error`, so the message bounces back to its sender.
+  Cloudflare doesn't document this. It's what senders report.
 
 #### `createRule(zoneId, token, address, worker, name?): Promise<string>`
 
@@ -219,7 +225,8 @@ Routes `address` to the Worker and returns the rule's ID.
 
 Returns `{ id, forwardsTo? }` for an enabled rule that already handles
 `address`, or `undefined`. A second rule for the same address won't run, so
-check this first.
+check this first. It reads every page of the zone's rules, and throws if
+Cloudflare can't list them, since a failed lookup doesn't mean there's no rule.
 
 #### `routingEnabled(zoneId, token): Promise<boolean | undefined>`
 
@@ -241,8 +248,11 @@ The owner and the sealing stay your decisions.
 | `POST /email/inbound` | `INBOUND_SECRET` | `onReceive` | 204 if kept, 403 if rejected or over 15 MiB, 503 until a handler is set |
 | `POST /email/events`  | `EVENTS_SECRET`  | `onEvents`  | 204, 400 for anything but a list, 503 until a handler is set            |
 
-A wrong or missing secret gets a 401. A 503 makes Cloudflare and Queues try
-again later, so nothing is lost before you set the handlers.
+A wrong or missing secret gets a 401. After a 401 or 503 from `/email/events`,
+Queues tries the batch again, five times, then keeps it in the dead letter
+queue. Mail isn't tried again: anything but a 2xx or 403 from `/email/inbound`
+bounces the message back to its sender. So set `onReceive` before you route an
+address to the Worker.
 
 Register the handlers once, for example from your setup action. The handles are
 checked with `v.function`, so passing a function with the wrong signature is a
@@ -294,7 +304,8 @@ export const onEvents = internalAction({
 ```
 
 `setHandlers` changes only what you pass, so you can set the two handlers from
-different places. A handler that throws makes the sender try again.
+different places. If `onEvents` throws, Queues tries the batch again. If
+`onReceive` throws, the message bounces back to its sender.
 
 ### Suppressions
 
