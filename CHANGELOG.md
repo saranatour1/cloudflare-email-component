@@ -7,8 +7,8 @@
   every inbox in one list, search, compose and reply with attachments,
   read/unread, Archive and Trash, and live delivery status. **Add inbox** routes
   new addresses or a domain's catch-all to it, and can keep forwarding a copy to
-  where the mail went before. It replaces the unauthenticated `/inbox` page. The
-  package itself is unchanged.
+  where the mail went before. It replaces the unauthenticated `/inbox` page.
+  This change is to the example only.
 
 Fixes:
 
@@ -18,11 +18,24 @@ Fixes:
   delivery events. A cleanup that fails also no longer hides why setup failed.
 - `ruleFor` reads every page of a zone's routing rules, not just the first 50.
   Past 50, it missed an address's rule, so setup routed the address again.
-- `lib.reseal` keeps the stored `error` when it's called without one. Before,
-  resealing only the payload deleted the error.
+- `ruleFor` throws when Cloudflare can't list the rules. It used to return
+  `undefined`, the same as "no rule", so a failed lookup led to a second rule
+  that never runs.
+- A sent email is no longer recorded as failed because of the shape of
+  Cloudflare's answer. A `null` list or a `message_id` that isn't text made the
+  component's `send` action throw after the mail had gone out.
 - `lib.markResult` does nothing for an email removed while it was sending,
   instead of throwing. `sendEmail` used to throw after the mail went out, so a
   caller that retried sent it twice.
+- `lib.reseal` keeps the stored `error` when it's called without one. Before,
+  resealing only the payload deleted the error.
+- `lib.removeOwner` deletes at least one email a call. A `limit` of 0 deleted
+  nothing and returned `true`, so a caller looping until `false` never finished.
+- `listSuppressions` leaves out a filter set to `undefined`. It used to send the
+  text "undefined", which matched nothing.
+- The inbound Worker rejects a message the app turned away when forwarding it
+  fails too. Before, nobody got the message and the sender wasn't told. Upload
+  the Worker again with `uploadWorker` to pick this up.
 
 ## 0.2.2
 

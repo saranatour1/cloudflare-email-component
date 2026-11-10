@@ -62,7 +62,12 @@ export const inboundWorker = `export default {
     if (!res.ok && res.status !== 403)
       throw new Error("The app didn't take the message: " + res.status)
     if (env.FORWARD_TO)
-      await message.forward(env.FORWARD_TO).catch((e) => console.error("Forward failed: " + e))
+      await message.forward(env.FORWARD_TO).catch((e) => {
+        console.error("Forward failed: " + e)
+        // The app turned it away too, so nobody has it. Say so, or it vanishes.
+        if (res.status === 403)
+          message.setReject("This address isn't accepting mail right now.")
+      })
   },
 }
 `;
@@ -155,12 +160,16 @@ export const ruleFor = async (
   // rule further on, and the caller would then route the address a second time.
   let found: Rule | undefined;
   for (let page = 1; page <= maxRulePages && !found; page++) {
-    const rules = (await call(
-      `/zones/${zoneId}/email/routing/rules?page=${page}&per_page=${rulesPerPage}`,
+    const { result } = await must(
+      `/zones/${zoneId}/email/routing/rules?per_page=${rulesPerPage}&page=${page}`,
       token,
-    )) as Rule[] | undefined;
-    found = rules?.find(matches);
-    if (!rules || rules.length < rulesPerPage) break;
+    );
+    // "No rule" has to be Cloudflare's answer. Reading a failed lookup as none
+    // would have the caller add a second rule, which never runs.
+    if (!Array.isArray(result))
+      throw new Error("Cloudflare didn't list the routing rules.");
+    found = (result as Rule[]).find(matches);
+    if (result.length < rulesPerPage) break;
   }
   return (
     found && {
@@ -243,8 +252,11 @@ export const listSuppressions = async (
     cursor?: string;
   } = {},
 ) => {
+  // An unset filter is left out. As text it would be "undefined", which matches nothing.
   const query = new URLSearchParams(
-    Object.entries(filter).map(([key, value]) => [key, String(value)]),
+    Object.entries(filter)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, String(value)]),
   );
   const body = await must(suppressions(accountId, `?${query}`), token);
   return {

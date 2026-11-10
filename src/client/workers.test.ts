@@ -103,6 +103,17 @@ describe("inboundWorker", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     await load(inboundWorker).email(m, { ...env, FORWARD_TO: "me@else.com" });
     expect(error).toHaveBeenCalled();
+    expect(m.setReject).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  test("a 403 whose forward fails turns the message away, as nobody has it", async () => {
+    answers(403);
+    const m = message();
+    m.forward.mockRejectedValueOnce(new Error("not verified"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await load(inboundWorker).email(m, { ...env, FORWARD_TO: "me@else.com" });
+    expect(m.setReject).toHaveBeenCalled();
     error.mockRestore();
   });
 });

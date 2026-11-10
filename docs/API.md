@@ -208,7 +208,7 @@ the routes mounted, that's `${CONVEX_SITE_URL}/email/inbound` and
 
 - 2xx: the message is taken.
 - 403: the message is rejected, unless there's a `forwardTo` address, which
-  still gets it.
+  still gets it. If that forward fails too, the message is rejected.
 - Anything else: Cloudflare tries again later.
 
 #### `createRule(zoneId, token, address, worker, name?): Promise<string>`
@@ -219,7 +219,8 @@ Routes `address` to the Worker and returns the rule's ID.
 
 Returns `{ id, forwardsTo? }` for an enabled rule that already handles
 `address`, or `undefined`. A second rule for the same address won't run, so
-check this first.
+check this first. It reads every page of the zone's rules, and throws if
+Cloudflare can't list them, since a failed lookup doesn't mean there's no rule.
 
 #### `routingEnabled(zoneId, token): Promise<boolean | undefined>`
 

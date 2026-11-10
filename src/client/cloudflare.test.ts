@@ -54,7 +54,7 @@ describe("ruleFor", () => {
     ...over,
   });
   const pageOf = (page: number) =>
-    `/zones/z/email/routing/rules?page=${page}&per_page=50`;
+    `/zones/z/email/routing/rules?per_page=50&page=${page}`;
   const path = pageOf(1);
   const others = (n: number) =>
     Array.from({ length: n }, (_, i) =>
@@ -86,6 +86,19 @@ describe("ruleFor", () => {
     route({ [path]: others(3) });
     expect(await ruleFor("z", "t", "me@example.com")).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  test("throws if the lookup fails, as that doesn't mean there's no rule", async () => {
+    route({});
+    await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow("no");
+    // The second page failing counts too: the rule could be on it.
+    route({ [pageOf(1)]: others(50) });
+    await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow("no");
+  });
+  test("throws on an answer that isn't a list", async () => {
+    route({ [path]: { id: "not a list" } });
+    await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow(
+      "didn't list",
+    );
   });
 });
 
@@ -163,6 +176,16 @@ describe("suppressions", () => {
     expect(called().path).toBe(
       `${path}?scope_type=sending_domain&scope_value=mail.example.com`,
     );
+  });
+
+  test("leaves out a filter that's set to undefined", async () => {
+    route({ [`${path}?reason=manual`]: [] });
+    const maybe: { email?: string } = {};
+    await listSuppressions("acc", "t", {
+      email: maybe.email,
+      reason: "manual",
+    });
+    expect(called().path).toBe(`${path}?reason=manual`);
   });
 
   test("adds one for a single sending domain", async () => {

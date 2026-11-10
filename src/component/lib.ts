@@ -215,7 +215,9 @@ export const remove = mutation({
 export const removeOwner = mutation({
   args: { owner: v.string(), limit: v.optional(v.number()) },
   returns: v.boolean(),
-  handler: async (ctx, { owner, limit = 500 }) => {
+  handler: async (ctx, { owner, ...args }) => {
+    // At least one, or a caller looping until this returns false would never finish.
+    const limit = Math.max(1, Math.floor(args.limit ?? 500));
     const emails = await ctx.db
       .query("emails")
       .withIndex("by_owner_and_direction", (q) => q.eq("owner", owner))

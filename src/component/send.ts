@@ -4,6 +4,12 @@ import type { BodyResponse, vEmail } from "./validators";
 const retryWaitsMs = [1000, 3000];
 const maxRecipients = 50;
 
+/** A list of addresses, or nothing if Cloudflare sent anything else, such as null. */
+const addresses = (list: unknown) =>
+  Array.isArray(list)
+    ? list.filter((a): a is string => typeof a === "string")
+    : undefined;
+
 export const sendThroughCloudflare = async ({
   accountId,
   apiToken,
@@ -59,22 +65,28 @@ export const sendThroughCloudflare = async ({
           `HTTP ${res.status}`,
       };
 
+    // The mail has gone out by now, so nothing in the answer's shape may throw here
+    // or fail the `send` action's return validator: that would record it as failed.
     const r = body.result ?? {};
     const outcome = {
-      delivered: r.delivered,
-      queued: r.queued,
-      permanentBounces: r.permanent_bounces,
-      suppressed: r.suppressed_recipients,
+      delivered: addresses(r.delivered),
+      queued: addresses(r.queued),
+      permanentBounces: addresses(r.permanent_bounces),
+      suppressed: addresses(r.suppressed_recipients),
     };
     // Cloudflare can say success while refusing every address.
     const dropped = [
-      ...(r.permanent_bounces ?? []),
-      ...(r.suppressed_recipients ?? []),
+      ...(outcome.permanentBounces ?? []),
+      ...(outcome.suppressed ?? []),
     ];
-    const accepted = r.delivered?.length || r.queued?.length;
+    const accepted = outcome.delivered?.length || outcome.queued?.length;
     return dropped.length && !accepted
       ? { ...outcome, error: `Not delivered to ${dropped.join(", ")}` }
-      : { ...outcome, messageId: r.message_id };
+      : {
+          ...outcome,
+          messageId:
+            typeof r.message_id === "string" ? r.message_id : undefined,
+        };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
