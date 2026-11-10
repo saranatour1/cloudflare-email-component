@@ -10,6 +10,20 @@
   where the mail went before. It replaces the unauthenticated `/inbox` page. The
   package itself is unchanged.
 
+Fixes:
+
+- `setUpDeliveryEvents` no longer deletes a Worker it didn't upload. Running it
+  again for a domain that was already set up failed on the taken queue name, and
+  its cleanup then deleted the Worker the working setup used, which stopped
+  delivery events. A cleanup that fails also no longer hides why setup failed.
+- `ruleFor` reads every page of a zone's routing rules, not just the first 50.
+  Past 50, it missed an address's rule, so setup routed the address again.
+- `lib.reseal` keeps the stored `error` when it's called without one. Before,
+  resealing only the payload deleted the error.
+- `lib.markResult` does nothing for an email removed while it was sending,
+  instead of throwing. `sendEmail` used to throw after the mail went out, so a
+  caller that retried sent it twice.
+
 ## 0.2.2
 
 - First version published from GitHub Actions with trusted publishing, so npm

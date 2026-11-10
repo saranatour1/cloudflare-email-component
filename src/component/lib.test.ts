@@ -248,3 +248,51 @@ describe("queue", () => {
     );
   });
 });
+
+describe("markResult", () => {
+  it("does nothing for an email removed while it was sending", async () => {
+    const t = initConvexTest();
+    const emailId = await t.mutation(api.lib.queue, {
+      owner: "me",
+      payload: "sealed",
+    });
+    await t.mutation(api.lib.remove, { emailId, owner: "me" });
+    await expect(
+      t.mutation(api.lib.markResult, { emailId, failed: false }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("reseal", () => {
+  it("keeps the error when only the payload is passed", async () => {
+    const t = initConvexTest();
+    const emailId = await t.mutation(api.lib.queue, {
+      owner: "me",
+      payload: "sealed",
+    });
+    await t.mutation(api.lib.markResult, {
+      emailId,
+      failed: true,
+      error: "sealed error",
+    });
+    await t.mutation(api.lib.reseal, {
+      emailId,
+      from: "sealed",
+      payload: "new",
+    });
+    expect(await t.query(api.lib.get, { emailId })).toMatchObject({
+      payload: "new",
+      error: "sealed error",
+    });
+    await t.mutation(api.lib.reseal, {
+      emailId,
+      from: "new",
+      payload: "newer",
+      error: "resealed error",
+    });
+    expect(await t.query(api.lib.get, { emailId })).toMatchObject({
+      payload: "newer",
+      error: "resealed error",
+    });
+  });
+});
