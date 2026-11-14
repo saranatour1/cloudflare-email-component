@@ -163,7 +163,11 @@ const email = {
 };
 ```
 
-- `from` must be on a domain you onboarded.
+- `from` must be on a domain you onboarded. If it isn't, Cloudflare answers
+  `10202 email.sending.error.email.invalid`, and that can hide another refusal.
+  An account with sending disabled got `10202` for a sender at `example.com`,
+  and `10203 email.sending.error.email.sending_disabled` only once the sender
+  was on a real domain.
 - At most 50 recipients across `to`, `cc` and `bcc`. `to` can be left out if
   there's a `cc` or `bcc`.
 - One of `text` or `html` is required. Send both when you can.
@@ -202,6 +206,8 @@ and rejects the **whole email** if one fails. The reason comes back in `error`.
 | Field              | Meaning                                                            |
 | ------------------ | ------------------------------------------------------------------ |
 | `error`            | Nothing was sent. The stored status is `failed`.                   |
+| `errorCode`        | Cloudflare's code for the refusal, such as `10203`                 |
+| `httpStatus`       | The HTTP status Cloudflare refused with                            |
 | `messageId`        | Cloudflare accepted the email. Keep it for threading and tracking. |
 | `delivered`        | Addresses the receiving server accepted right away                 |
 | `queued`           | Addresses Cloudflare will keep trying; they can still bounce later |
@@ -211,7 +217,21 @@ and rejects the **whole email** if one fails. The reason comes back in `error`.
 Stored status `sent` means Cloudflare accepted the email, not that it arrived.
 Set up [delivery tracking](#delivery-tracking) to learn the outcome. If every
 address was refused, `sendEmail` returns an `error` even though Cloudflare
-answered with success.
+answered with success. It names each address and says whether it bounced or is
+on your suppression list.
+
+When Cloudflare refuses, `error` is one line with the code, Cloudflare's
+message, what its
+[error table](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/#error-responses)
+says the code means, and the HTTP status:
+
+```text
+10203 email.sending.error.email.sending_disabled: Sending disabled for this zone or account (HTTP 403)
+```
+
+Match on `errorCode`, not the text, to retry, alert or fall back. A failure that
+isn't Cloudflare's answer has no `errorCode` or `httpStatus`: no recipient or
+body, no credentials, or a request that got no response.
 
 If any recipient is on your suppression list, Cloudflare rejects the whole
 email. To send to the rest, turn on **Drop suppressed recipients** for the

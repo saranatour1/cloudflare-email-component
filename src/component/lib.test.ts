@@ -22,8 +22,8 @@ const cloudflareSays = (status: number, body: object) =>
   new Response(JSON.stringify(body), { status });
 const accepted = (result: object) =>
   cloudflareSays(200, { success: true, result });
-const refused = (status: number, message: string) =>
-  cloudflareSays(status, { success: false, errors: [{ message }] });
+const refused = (status: number, message: string, code?: unknown) =>
+  cloudflareSays(status, { success: false, errors: [{ code, message }] });
 
 describe("send", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -51,7 +51,6 @@ describe("send", () => {
     expect(await send()).toMatchObject({ messageId: "<a@b>" });
   });
 
-  // The mail went out, so an answer shaped differently mustn't turn into a throw.
   it.each([
     ["a null list", { message_id: "<a@b>", delivered: email.to, queued: null }],
     [
@@ -80,9 +79,12 @@ describe("send", () => {
     expect(await send()).toMatchObject({ messageId: "<a@b>" });
   });
 
-  it.each(["permanent_bounces", "suppressed_recipients"])(
+  it.each([
+    ["permanent_bounces", "you@example.com bounced"],
+    ["suppressed_recipients", "you@example.com is on your suppression list"],
+  ])(
     "fails when success only lists the address under %s",
-    async (field) => {
+    async (field, why) => {
       fetchMock.mockResolvedValueOnce(
         accepted({
           message_id: "<a@b>",
@@ -91,11 +93,37 @@ describe("send", () => {
           [field]: email.to,
         }),
       );
-      expect(await send()).toMatchObject({
-        error: "Not delivered to you@example.com",
-      });
+      expect(await send()).toMatchObject({ error: `Not delivered: ${why}` });
     },
   );
+
+  it("names Cloudflare's code, what it means and the HTTP status", async () => {
+    fetchMock.mockResolvedValueOnce(
+      refused(403, "email.sending.error.email.sending_disabled", 10203),
+    );
+    expect(await send()).toEqual({
+      error:
+        "10203 email.sending.error.email.sending_disabled: Sending disabled for this zone or account (HTTP 403)",
+      errorCode: 10203,
+      httpStatus: 403,
+    });
+  });
+
+  it("leaves out a code that isn't a number", async () => {
+    fetchMock.mockResolvedValueOnce(refused(400, "no", "E_NO"));
+    expect(await send()).toEqual({
+      error: "E_NO no (HTTP 400)",
+      httpStatus: 400,
+    });
+  });
+
+  it("says so when the refusal has no details", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("<html>", { status: 502 }));
+    expect(await send()).toEqual({
+      error: "Cloudflare answered HTTP 502 with no error details",
+      httpStatus: 502,
+    });
+  });
 
   it.each([429, 503])("tries again after a %i", async (status) => {
     fetchMock
@@ -109,13 +137,19 @@ describe("send", () => {
 
   it("gives up after three attempts", async () => {
     fetchMock.mockImplementation(() => Promise.resolve(refused(429, "busy")));
-    expect(await send()).toEqual({ error: "busy" });
+    expect(await send()).toEqual({
+      error: "busy (HTTP 429)",
+      httpStatus: 429,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it.each([400, 500])("doesn't retry a %i", async (status) => {
     fetchMock.mockResolvedValueOnce(refused(status, "no"));
-    expect(await send()).toEqual({ error: "no" });
+    expect(await send()).toEqual({
+      error: `no (HTTP ${status})`,
+      httpStatus: status,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -326,7 +360,6 @@ describe("removeOwner", () => {
       const t = initConvexTest();
       for (let i = 0; i < 2; i++)
         await t.mutation(api.lib.queue, { owner: "me", payload: "sealed" });
-      // A caller loops until this is false, so a call that deletes nothing never ends.
       expect(
         await t.mutation(api.lib.removeOwner, { owner: "me", limit }),
       ).toBe(true);

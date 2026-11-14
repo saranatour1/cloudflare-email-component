@@ -6,12 +6,9 @@ import component from "@sarant/cloudflare-email-component/test";
 import { registerUsername } from "@convex-dev/auth/components/username/test";
 
 const modules = import.meta.glob("./**/*.*s");
-// When users want to write tests that use your component, they need to
-// explicitly register it with its schema and modules.
 export function initConvexTest() {
   const t = convexTest(schema, modules);
   component.register(t);
-  // Where Convex Auth keeps each user's username, which here is their email.
   registerUsername(t);
   return t;
 }

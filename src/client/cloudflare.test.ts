@@ -27,7 +27,6 @@ const refused = (message: string) =>
   new Response(JSON.stringify({ success: false, errors: [{ message }] }), {
     status: 403,
   });
-/** Answers by the path after /client/v4, and refuses any other. */
 const route = (routes: Record<string, unknown>) =>
   fetchMock.mockImplementation((url) => {
     const path = (url as string).replace(
@@ -90,7 +89,6 @@ describe("ruleFor", () => {
   test("throws if the lookup fails, as that doesn't mean there's no rule", async () => {
     route({});
     await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow("no");
-    // The second page failing counts too: the rule could be on it.
     route({ [pageOf(1)]: others(50) });
     await expect(ruleFor("z", "t", "me@example.com")).rejects.toThrow("no");
   });
@@ -115,9 +113,11 @@ describe("createRule", () => {
       actions: [{ type: "worker", value: ["w"] }],
     });
   });
-  test("throws Cloudflare's reason", async () => {
+  test("throws Cloudflare's reason and the call it was for", async () => {
     route({});
-    await expect(createRule("z", "t", "a@b.c", "w")).rejects.toThrow("no");
+    await expect(createRule("z", "t", "a@b.c", "w")).rejects.toThrow(
+      "POST /zones/…/email/routing/rules: no (HTTP 403)",
+    );
   });
 });
 
@@ -226,6 +226,11 @@ describe("suppressions", () => {
     route({});
     await expect(listSuppressions("acc", "t")).rejects.toThrow("no");
     await expect(
+      listSuppressions("acc", "t", { email: "a@example.com" }),
+    ).rejects.toThrow(
+      /^GET \/accounts\/…\/email\/sending\/suppressions: no \(HTTP 403\)$/,
+    );
+    await expect(
       addSuppression("acc", "t", { email: "a@example.com" }),
     ).rejects.toThrow("no");
   });
@@ -244,7 +249,6 @@ describe("setUpDeliveryEvents", () => {
       init!.method ?? "GET",
       (url as string).split("/v4")[1],
     ]);
-  /** Answers every call, and makes new queues get ids from their names. */
   const answering = (failOn?: string) =>
     fetchMock.mockImplementation((url, init) => {
       const path = (url as string).split("/v4")[1]!;
@@ -314,7 +318,6 @@ describe("setUpDeliveryEvents", () => {
   });
 
   test("leaves an existing Worker alone if it fails before uploading one", async () => {
-    // Running setup again for the same domain: the queue's name is taken.
     answering("/accounts/acc/queues");
     await expect(setUpDeliveryEvents("acc", "t", options)).rejects.toThrow(
       "not allowed",

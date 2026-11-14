@@ -1,7 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server.js";
 
-// Convex Auth keeps accounts and passwords in its components, and the app keeps the users.
 export const create = internalMutation({
   args: {
     provider: v.object({

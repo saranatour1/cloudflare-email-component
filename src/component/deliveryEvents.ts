@@ -1,5 +1,3 @@
-// Shared by the component's /events route and the client.
-
 export const statuses = {
   "cf.email.sending.message.delivered": "delivered",
   "cf.email.sending.message.deferred": "deferred",

@@ -155,6 +155,8 @@ or when there are no credentials:
   emailId: Id<"emails">;
   messageId?: string;        // Set when Cloudflare accepted the email
   error?: string;            // Set when nothing went out
+  errorCode?: number;        // Cloudflare's code for a refusal, such as 10203
+  httpStatus?: number;       // The HTTP status Cloudflare refused with
   delivered?: string[];
   queued?: string[];
   permanentBounces?: string[];
@@ -167,7 +169,10 @@ A 429 or 503 is retried twice. An email whose send dies midway is marked
 
 Setup, receiving and suppression helpers come from
 `@sarant/cloudflare-email-component/cloudflare`, so apps that only send don't
-bundle them.
+bundle them. When Cloudflare refuses one, it throws an `Error` that names the
+call, such as
+`POST /zones/…/email/routing/rules: 10000 Authentication error (HTTP 403)`. The
+message leaves out the account or zone ID and any query string.
 
 ### Delivery tracking
 

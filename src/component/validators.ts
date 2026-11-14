@@ -51,7 +51,6 @@ export const vDelivery = v.union(
   v.literal("complained"),
 );
 
-/** Takes the raw MIME the inbound Worker posts. "reject" turns the message away. */
 export const vReceiveHandler = v.function({
   fnType: "action",
   args: {
@@ -62,7 +61,6 @@ export const vReceiveHandler = v.function({
   returns: v.union(v.literal("accept"), v.literal("reject")),
 });
 
-/** Takes a batch of delivery events. Queues can deliver one twice. */
 export const vEventsHandler = v.function({
   fnType: "action",
   // Cloudflare may add fields, so these aren't checked beyond `parseDeliveryEvents`.
@@ -79,14 +77,13 @@ export const vStatus = v.union(
 
 export const vDirection = v.union(v.literal("inbound"), v.literal("outbound"));
 
-export type BodyResponse = {
-  success?: boolean;
-  errors?: { message: string }[];
-  result?: {
-    message_id?: string;
-    delivered?: string[];
-    queued?: string[];
-    permanent_bounces?: string[];
-    suppressed_recipients?: string[];
-  };
-} | null;
+export const vSendResult = v.object({
+  messageId: v.optional(v.string()),
+  error: v.optional(v.string()),
+  errorCode: v.optional(v.number()),
+  httpStatus: v.optional(v.number()),
+  delivered: v.optional(v.array(v.string())),
+  queued: v.optional(v.array(v.string())),
+  permanentBounces: v.optional(v.array(v.string())),
+  suppressed: v.optional(v.array(v.string())),
+});

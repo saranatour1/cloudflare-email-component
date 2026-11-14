@@ -1,10 +1,12 @@
+import { type CloudflareErrors, cloudflareError } from "../component/send.js";
+
 const base = "https://api.cloudflare.com/client/v4";
 
 type Answer = {
   success?: boolean;
   result?: unknown;
   result_info?: { cursor?: string };
-  errors?: { message: string }[];
+  errors?: CloudflareErrors;
 };
 
 const request = async (path: string, token: string, init: RequestInit = {}) => {
@@ -12,19 +14,17 @@ const request = async (path: string, token: string, init: RequestInit = {}) => {
   headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(base + path, { ...init, headers });
   const body = (await res.json().catch(() => null)) as Answer | null;
-  return { ok: res.ok && !!body?.success, body };
+  return { ok: res.ok && !!body?.success, status: res.status, body };
 };
 
-const call = async (path: string, token: string) => {
-  const { ok, body } = await request(path, token);
-  return ok ? body?.result : undefined;
-};
+const withoutIdsOrQuery = (path: string) =>
+  path.replace(/^\/(accounts|zones)\/[^/]+/, "/$1/…").replace(/\?.*/, "");
 
 const must = async (path: string, token: string, init?: RequestInit) => {
-  const { ok, body } = await request(path, token, init);
+  const { ok, status, body } = await request(path, token, init);
   if (!ok)
     throw new Error(
-      body?.errors?.map((e) => e.message).join("; ") || "Cloudflare said no.",
+      `${init?.method ?? "GET"} ${withoutIdsOrQuery(path)}: ${cloudflareError(status, body).error}`,
     );
   return body as Answer;
 };
@@ -38,12 +38,11 @@ const json = (method: string, body: unknown) => ({
 const remove = (path: string, token: string) =>
   request(path, token, { method: "DELETE" });
 
-export const routingEnabled = async (zoneId: string, token: string) =>
-  (
-    (await call(`/zones/${zoneId}/email/routing`, token)) as
-      | { enabled?: boolean }
-      | undefined
-  )?.enabled;
+export const routingEnabled = async (zoneId: string, token: string) => {
+  const { ok, body } = await request(`/zones/${zoneId}/email/routing`, token);
+  if (!ok) return undefined;
+  return (body?.result as { enabled?: boolean } | undefined)?.enabled;
+};
 
 export const inboundWorker = `export default {
   async email(message, env) {
@@ -141,7 +140,6 @@ type Rule = {
 };
 
 const rulesPerPage = 50;
-// Well past the rules a zone can have, so a bad answer can't loop forever.
 const maxRulePages = 20;
 
 export const ruleFor = async (
@@ -156,16 +154,12 @@ export const ruleFor = async (
         m.type === "literal" &&
         m.value?.toLowerCase() === address.toLowerCase(),
     );
-  // Cloudflare lists 50 rules a page. Stopping at the first page would miss a
-  // rule further on, and the caller would then route the address a second time.
   let found: Rule | undefined;
   for (let page = 1; page <= maxRulePages && !found; page++) {
     const { result } = await must(
       `/zones/${zoneId}/email/routing/rules?per_page=${rulesPerPage}&page=${page}`,
       token,
     );
-    // "No rule" has to be Cloudflare's answer. Reading a failed lookup as none
-    // would have the caller add a second rule, which never runs.
     if (!Array.isArray(result))
       throw new Error("Cloudflare didn't list the routing rules.");
     found = (result as Rule[]).find(matches);
@@ -252,7 +246,6 @@ export const listSuppressions = async (
     cursor?: string;
   } = {},
 ) => {
-  // An unset filter is left out. As text it would be "undefined", which matches nothing.
   const query = new URLSearchParams(
     Object.entries(filter)
       .filter(([, value]) => value !== undefined)
@@ -350,9 +343,7 @@ export const setUpDeliveryEvents = async (
 ) => {
   const queues = `/accounts/${accountId}/queues`;
   const setup: DeliveryEventsSetup = {};
-  // Set once this run has uploaded the Worker, so a failure before that leaves a
-  // Worker of the same name, such as one from an earlier setup, where it is.
-  let uploaded = false;
+  let ownsWorker = false;
   const create = async (path: string, body: unknown) =>
     (await must(path, token, json("POST", body))).result as {
       id: string;
@@ -367,7 +358,7 @@ export const setUpDeliveryEvents = async (
       EVENTS_URL: eventsUrl,
       SECRET: secret,
     });
-    uploaded = true;
+    ownsWorker = true;
     await create(`${queues}/${setup.queueId}/consumers`, {
       type: "worker",
       script_name: name,
@@ -392,10 +383,12 @@ export const setUpDeliveryEvents = async (
     ).id;
     return setup as Required<DeliveryEventsSetup>;
   } catch (cause) {
-    // A failed cleanup mustn't hide why the setup failed.
-    await takeDown(accountId, token, uploaded ? name : undefined, setup).catch(
-      () => undefined,
-    );
+    await takeDown(
+      accountId,
+      token,
+      ownsWorker ? name : undefined,
+      setup,
+    ).catch(() => undefined);
     throw cause;
   }
 };

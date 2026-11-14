@@ -340,7 +340,6 @@ function Deliveries({ emailId }: { emailId: string }) {
   );
 }
 
-/** Uploads the files picked in a form's `files` input, ready to attach. */
 function useUploads() {
   const uploadUrl = useMutation(api.mail.uploadUrl);
   return (form: FormData) =>
@@ -466,7 +465,6 @@ export function Compose({
         text: field("text"),
         attachments: await uploads(form),
       });
-      // A failed send is kept in Sent, so it can be read and retried there.
       if (error) setError(`Not sent: ${error}`);
       else done(threadId);
     } catch (e) {
@@ -551,7 +549,6 @@ export function AddInbox({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const domain = address.split("@")[1]?.trim().toLowerCase() ?? "";
-  // A zone is asked for once per domain, then remembered.
   const known = domains.find((d) => d.domain === domain);
   const needsZone = domain.includes(".") && !known;
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -566,7 +563,6 @@ export function AddInbox({
         keepForwarding: form.get("keepForwarding") === "on",
       });
       const added = address.trim().toLowerCase();
-      // A catch-all has no inbox of its own, so show them all.
       done(added.startsWith("*@") ? undefined : added);
     } catch (e) {
       setError(errorText(e));

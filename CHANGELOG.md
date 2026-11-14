@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- A refused send now says which Cloudflare error it was. `sendEmail` returns
+  `errorCode`, Cloudflare's numeric code such as `10203`, and `httpStatus`. The
+  `error` text used to be Cloudflare's message alone. It now also has the code,
+  what Cloudflare's docs say the code means, and the HTTP status, as in
+  `10203 email.sending.error.email.sending_disabled: Sending disabled for this zone or account (HTTP 403)`.
+  **If you compare `error` to Cloudflare's message, match on `errorCode`
+  instead.**
+- A refusal with no details reads
+  `Cloudflare answered HTTP 502 with no error details` rather than `HTTP 502`.
+- When every address is refused, `error` says why for each one, such as
+  `Not delivered: a@example.com bounced; b@example.com is on your suppression list`.
+- The setup and suppression helpers name the call Cloudflare refused, such as
+  `POST /zones/…/email/routing/rules: 10000 Authentication error (HTTP 403)`.
+  Without details they used to throw `Cloudflare said no.`
+
+Docs:
+
+- The README says which errors to expect when `from` isn't on a domain you
+  onboarded.
+
 ## 0.3.0
 
 - The example is now a full inbox: a React app in `example/`, laid out like

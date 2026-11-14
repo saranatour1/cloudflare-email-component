@@ -30,7 +30,6 @@ export default defineSchema({
   })
     .index("by_owner_and_eventId", ["owner", "eventId"])
     .index("by_owner_and_messageId", ["owner", "messageId"]),
-  // save the return functions here, doesn't work on runtime
   handlers: defineTable({
     onReceive: v.optional(vReceiveHandler),
     onEvents: v.optional(vEventsHandler),
