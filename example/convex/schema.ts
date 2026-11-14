@@ -15,9 +15,7 @@ export const vAttachment = v.object({
 });
 
 export default defineSchema({
-  users: defineTable({
-    email: v.optional(v.string()),
-  }),
+  users: defineTable({}),
   threads: defineTable({
     inbox: v.string(),
     subject: v.string(),
@@ -27,7 +25,7 @@ export default defineSchema({
     folder: vFolder,
     unread: v.boolean(),
     sent: v.boolean(),
-    search: v.optional(v.string()),
+    search: v.string(),
   })
     .index("by_folder_and_lastAt", ["folder", "lastAt"])
     .index("by_folder_and_unread_and_lastAt", ["folder", "unread", "lastAt"])
