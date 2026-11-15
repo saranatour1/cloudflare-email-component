@@ -16,6 +16,16 @@
 - The setup and suppression helpers name the call Cloudflare refused, such as
   `POST /zones/…/email/routing/rules: 10000 Authentication error (HTTP 403)`.
   Without details they used to throw `Cloudflare said no.`
+- `removeInbound` and `removeDeliveryEvents` throw when Cloudflare refuses a
+  delete. They used to resolve whether or not anything was deleted. They stop at
+  the first refusal, so a rule that can't be deleted keeps the Worker it points
+  at. A 404 counts as removed, so running them again is safe.
+- The inbound Worker tells the sender `Message too large` when that is why the
+  route turned a message away. It used to say
+  `This address isn't accepting mail right now.` for every rejection. Upload the
+  Worker again with `uploadWorker` to pick this up.
+- `vEmail` no longer accepts `imageId` on an address. Nothing read it, and it
+  was posted to Cloudflare as it was.
 
 Docs:
 

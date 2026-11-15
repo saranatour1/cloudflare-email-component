@@ -187,7 +187,9 @@ returns. If a step fails, it removes whatever it already created.
 
 #### `removeDeliveryEvents(accountId, token, name, setup)`
 
-Undoes `setUpDeliveryEvents`.
+Undoes `setUpDeliveryEvents`: the subscription, the queues, then the Worker. It
+throws at the first delete Cloudflare refuses. Something that's already gone
+counts as removed, so it's safe to run again.
 
 #### `parseDeliveryEvents(body: unknown[]): DeliveryEvent[]`
 
@@ -216,7 +218,9 @@ the routes mounted, that's `${CONVEX_SITE_URL}/email/inbound` and
 
 - 2xx: the message is taken.
 - 403: the message is rejected, unless there's a `forwardTo` address, which
-  still gets it. If that forward fails too, the message is rejected.
+  still gets it. If that forward fails too, the message is rejected. The sender
+  is told `Message too large` when that was the route's reason, and
+  `This address isn't accepting mail right now.` otherwise.
 - Anything else: the Worker throws, and the message isn't tried again.
   Cloudflare answers the sending server with a permanent error,
   `521 5.3.0 Upstream error`, so the message bounces back to its sender.
@@ -240,7 +244,9 @@ records, so leave that to the domain owner.
 
 #### `removeInbound(accountId, zoneId, token, worker, ruleId, aliasRules?)`
 
-Deletes the rules and then the Worker.
+Deletes the rules and then the Worker. It throws at the first delete Cloudflare
+refuses, so a rule that can't be deleted keeps its Worker. Something that's
+already gone counts as removed, so it's safe to run again.
 
 ## HTTP routes and handlers
 

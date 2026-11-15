@@ -440,7 +440,8 @@ await createRule(zoneId, token, "support@example.com", "my-inbound-worker");
   first.
 - `forwardTo` is optional and must be a verified destination address. The Worker
   then also forwards a copy there.
-- `removeInbound` deletes the rules and the Worker.
+- `removeInbound` deletes the rules and the Worker, and throws if Cloudflare
+  refuses a delete.
 
 The route passes each raw message to your `onReceive` handler. Parse it, decide
 the owner, seal what you keep, and store it with `lib.receive`:
@@ -474,9 +475,9 @@ export const receive = internalAction({
 
 - Return `"reject"` to turn a message away, such as spam. The sender gets a
   bounce, unless there's a `forwardTo`.
-- Messages over 15 MiB are turned away before they reach you. What you store
-  must fit in a 1 MiB document, so trim it: keep the text and drop attachments
-  or store them in file storage.
+- Messages over 15 MiB are turned away before they reach you, and the sender is
+  told the message was too large. What you store must fit in a 1 MiB document,
+  so trim it: keep the text and drop attachments or store them in file storage.
 - If the handler throws, the message isn't tried again. The Worker fails, and
   Cloudflare answers the sending server with a permanent error,
   `521 5.3.0 Upstream error`, so the message bounces back to its sender. The

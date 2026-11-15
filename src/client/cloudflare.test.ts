@@ -132,8 +132,26 @@ test("uploadWorker keeps the secret in a secret binding and skips an unset forwa
   ]);
 });
 
-test("removeInbound deletes every rule and the Worker, skipping an empty rule id", async () => {
+test("removeInbound stops at a delete Cloudflare refuses, so no rule points at a deleted Worker", async () => {
   route({});
+  await expect(removeInbound("acc", "z", "t", "w", "rule")).rejects.toThrow(
+    "DELETE /zones/…/email/routing/rules/rule: no (HTTP 403)",
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("removeInbound counts what's already gone as removed", async () => {
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ success: false }), { status: 404 }),
+    ),
+  );
+  await removeInbound("acc", "z", "t", "w", "rule");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test("removeInbound deletes every rule and the Worker, skipping an empty rule id", async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(answer(null)));
   await removeInbound("acc", "z", "t", "w", "", ["alias"]);
   expect(
     fetchMock.mock.calls.map(([url, init]) => [
@@ -350,6 +368,21 @@ describe("setUpDeliveryEvents", () => {
       ["DELETE", "/accounts/acc/queues/q"],
       ["DELETE", "/accounts/acc/queues/d"],
       ["DELETE", "/accounts/acc/workers/scripts/events"],
+    ]);
+  });
+
+  test("removeDeliveryEvents stops at a delete Cloudflare refuses", async () => {
+    answering("/accounts/acc/queues/q");
+    await expect(
+      removeDeliveryEvents("acc", "t", "events", {
+        queueId: "q",
+        deadLetterQueueId: "d",
+        subscriptionId: "sub",
+      }),
+    ).rejects.toThrow("not allowed");
+    expect(calls()).toEqual([
+      ["DELETE", `${subscriptions}/sub`],
+      ["DELETE", "/accounts/acc/queues/q"],
     ]);
   });
 });

@@ -239,6 +239,16 @@ describe("send, the way Cloudflare's examples address mail", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("refuses an address field Cloudflare doesn't take", async () => {
+    await expect(
+      sendEmail({
+        to: "a@example.com",
+        from: { address: "me@example.com", imageId: "x" },
+      }),
+    ).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("says who got it and who didn't", async () => {
     fetchMock.mockResolvedValueOnce(
       accepted({
