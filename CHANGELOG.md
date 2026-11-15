@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - A refused send now says which Cloudflare error it was. `sendEmail` returns
   `errorCode`, Cloudflare's numeric code such as `10203`, and `httpStatus`. The
