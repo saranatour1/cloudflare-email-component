@@ -129,18 +129,25 @@ describe("sendEmail", () => {
   test("records a refused email with its error sealed", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ success: false, errors: [{ message: "no" }] }),
+        JSON.stringify({
+          success: false,
+          errors: [{ code: 10001, message: "no" }],
+        }),
         {
           status: 400,
         },
       ),
     );
     const t = createTest();
-    const { emailId, error } = await t.action(api.mail.send, { email });
-    expect(error).toBe("no");
+    const { emailId, error, errorCode, httpStatus } = await t.action(
+      api.mail.send,
+      { email },
+    );
+    expect(error).toBe("10001 no (HTTP 400)");
+    expect([errorCode, httpStatus]).toEqual([10001, 400]);
     const stored = await t.query(api.mail.get, { emailId });
     expect(stored?.status).toBe("failed");
-    expect(stored?.error).toBe("sealed:no");
+    expect(stored?.error).toBe("sealed:10001 no (HTTP 400)");
   });
 
   test("without credentials, sends with the ones bound in app.use", async () => {

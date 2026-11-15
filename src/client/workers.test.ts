@@ -1,5 +1,3 @@
-// @vitest-environment node
-// Runs the Workers' source as Cloudflare would call it. Node, as edge-runtime refuses `new Function`.
 import {
   afterEach,
   beforeEach,
@@ -10,12 +8,14 @@ import {
 } from "vite-plus/test";
 import { eventsWorker, inboundWorker } from "./cloudflare.js";
 
-const load = (source: string) =>
-  // oxlint-disable-next-line typescript/no-implied-eval
-  new Function(`return ${source.replace("export default", "").trim()}`)() as {
+const load = async (source: string) =>
+  (await import(`data:text/javascript,${encodeURIComponent(source)}`))
+    .default as {
     queue: (batch: unknown, env: unknown) => Promise<void>;
     email: (message: unknown, env: unknown) => Promise<void>;
   };
+const events = await load(eventsWorker);
+const inbound = await load(inboundWorker);
 
 const fetchMock = vi.fn<typeof fetch>();
 beforeEach(() => {
@@ -30,7 +30,7 @@ describe("eventsWorker", () => {
 
   test("posts the batch's bodies with the secret", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-    await load(eventsWorker).queue(batch, env);
+    await events.queue(batch, env);
     const [url, init] = fetchMock.mock.lastCall!;
     expect(url).toBe(env.EVENTS_URL);
     expect(init!.headers).toMatchObject({ Authorization: "Bearer s" });
@@ -39,9 +39,7 @@ describe("eventsWorker", () => {
 
   test.each([401, 500])("throws on a %i, so Queues retries", async (status) => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status }));
-    await expect(load(eventsWorker).queue(batch, env)).rejects.toThrow(
-      String(status),
-    );
+    await expect(events.queue(batch, env)).rejects.toThrow(String(status));
   });
 });
 
@@ -60,7 +58,7 @@ describe("inboundWorker", () => {
   test("posts the raw message and envelope", async () => {
     answers(204);
     const m = message();
-    await load(inboundWorker).email(m, env);
+    await inbound.email(m, env);
     const [, init] = fetchMock.mock.lastCall!;
     expect(init!.headers).toMatchObject({
       Authorization: "Bearer s",
@@ -77,14 +75,14 @@ describe("inboundWorker", () => {
   test("a 403 turns the message away", async () => {
     answers(403);
     const m = message();
-    await load(inboundWorker).email(m, env);
+    await inbound.email(m, env);
     expect(m.setReject).toHaveBeenCalled();
   });
 
   test("a 403 still forwards if there's somewhere to forward it", async () => {
     answers(403);
     const m = message();
-    await load(inboundWorker).email(m, { ...env, FORWARD_TO: "me@else.com" });
+    await inbound.email(m, { ...env, FORWARD_TO: "me@else.com" });
     expect(m.setReject).not.toHaveBeenCalled();
     expect(m.forward).toHaveBeenCalledWith("me@else.com");
   });
@@ -92,7 +90,7 @@ describe("inboundWorker", () => {
   test("anything else throws, so the message bounces to its sender", async () => {
     answers(500);
     const m = message();
-    await expect(load(inboundWorker).email(m, env)).rejects.toThrow("500");
+    await expect(inbound.email(m, env)).rejects.toThrow("500");
     expect(m.forward).not.toHaveBeenCalled();
   });
 
@@ -101,7 +99,7 @@ describe("inboundWorker", () => {
     const m = message();
     m.forward.mockRejectedValueOnce(new Error("not verified"));
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    await load(inboundWorker).email(m, { ...env, FORWARD_TO: "me@else.com" });
+    await inbound.email(m, { ...env, FORWARD_TO: "me@else.com" });
     expect(error).toHaveBeenCalled();
     expect(m.setReject).not.toHaveBeenCalled();
     error.mockRestore();
@@ -112,7 +110,7 @@ describe("inboundWorker", () => {
     const m = message();
     m.forward.mockRejectedValueOnce(new Error("not verified"));
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    await load(inboundWorker).email(m, { ...env, FORWARD_TO: "me@else.com" });
+    await inbound.email(m, { ...env, FORWARD_TO: "me@else.com" });
     expect(m.setReject).toHaveBeenCalled();
     error.mockRestore();
   });

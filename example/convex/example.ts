@@ -18,9 +18,7 @@ import {
   internalQuery,
 } from "./_generated/server.js";
 
-/** Check who's asking before calling this, or it's an open mail relay. */
-export const deliver = async (ctx: ActionCtx, email: Email) =>
-  // The component sends with the credentials bound in convex.config.ts.
+export const deliverUnchecked = async (ctx: ActionCtx, email: Email) =>
   await sendEmail(ctx, components.cloudflareEmail, {
     owner: "example",
     email,
@@ -28,11 +26,9 @@ export const deliver = async (ctx: ActionCtx, email: Email) =>
     seal: (text) => text,
   });
 
-// Internal, so only the CLI, the dashboard or your own functions can call them.
-// A public action here would be an open mail relay: authorize the caller first.
 export const send = internalAction({
   args: { email: vEmail },
-  handler: (ctx, { email }) => deliver(ctx, email),
+  handler: (ctx, { email }) => deliverUnchecked(ctx, email),
 });
 
 export const list = internalQuery({
@@ -54,7 +50,6 @@ export const deliveryEvents = internalQuery({
     ctx.runQuery(components.cloudflareEmail.events.list, args),
 });
 
-/** Hands the component's /email routes to this app. Run once, or by the setUp actions. */
 export const connect = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -81,14 +76,12 @@ export const onEvents = internalAction({
       },
     );
     for (const { event, isNew } of results)
-      // Take event.payload.recipient off your own mailing lists here.
       if (isNew && isUndeliverable(event))
         console.log(`Stop mailing, from event ${event.payload.eventId}`);
     return null;
   },
 });
 
-/** Run once per sending domain. Keep what it returns for `removeDeliveryEvents`. */
 export const setUpEvents = internalAction({
   args: { zoneId: v.string(), domain: v.string() },
   handler: async (ctx, { zoneId, domain }) => {

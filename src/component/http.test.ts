@@ -13,10 +13,8 @@ import { api } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
 import { initConvexTest } from "./setup.test.js";
 
-// Stand-ins for the app's handlers. The component tests run it as the app, so these
-// load as functions of this module.
 const calls: unknown[] = [];
-export const receive = internalAction({
+export const appOnReceive = internalAction({
   args: {
     raw: v.bytes(),
     envelopeFrom: v.optional(v.string()),
@@ -29,7 +27,7 @@ export const receive = internalAction({
     return text.includes("spam") ? "reject" : "accept";
   },
 });
-export const events = internalAction({
+export const appOnEvents = internalAction({
   args: { events: v.array(v.any()) },
   returns: v.null(),
   handler: async (_ctx, args) => {
@@ -72,8 +70,8 @@ describe("routes", () => {
   test("take nothing without their own secret", async () => {
     const t = initConvexTest();
     await t.mutation(api.lib.setHandlers, {
-      onReceive: await handle(t, "receive"),
-      onEvents: await handle(t, "events"),
+      onReceive: await handle(t, "appOnReceive"),
+      onEvents: await handle(t, "appOnEvents"),
     });
     expect((await post(t, "/inbound", "ev-secret", "Hi")).status).toBe(401);
     expect((await post(t, "/events", "in-secret", "[]")).status).toBe(401);
@@ -96,7 +94,7 @@ describe("routes", () => {
   test("hand inbound mail to the app, which can turn it away", async () => {
     const t = initConvexTest();
     await t.mutation(api.lib.setHandlers, {
-      onReceive: await handle(t, "receive"),
+      onReceive: await handle(t, "appOnReceive"),
     });
     const envelope = {
       "X-Envelope-From": "bounce@sender.example",
@@ -119,7 +117,7 @@ describe("routes", () => {
   test("hand the app only the delivery events it knows", async () => {
     const t = initConvexTest();
     await t.mutation(api.lib.setHandlers, {
-      onEvents: await handle(t, "events"),
+      onEvents: await handle(t, "appOnEvents"),
     });
     expect((await post(t, "/events", "ev-secret", "{}")).status).toBe(400);
     const body = JSON.stringify([sentEvent, { type: "something.new" }]);
@@ -130,10 +128,10 @@ describe("routes", () => {
   test("setting one handler keeps the other", async () => {
     const t = initConvexTest();
     await t.mutation(api.lib.setHandlers, {
-      onReceive: await handle(t, "receive"),
+      onReceive: await handle(t, "appOnReceive"),
     });
     await t.mutation(api.lib.setHandlers, {
-      onEvents: await handle(t, "events"),
+      onEvents: await handle(t, "appOnEvents"),
     });
     expect((await post(t, "/inbound", "in-secret", "Hi")).status).toBe(204);
     expect((await post(t, "/events", "ev-secret", "[]")).status).toBe(204);

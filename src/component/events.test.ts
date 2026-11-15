@@ -136,7 +136,6 @@ describe("events", () => {
     expect(await statusOf(t, emailId)).toBe("bounced");
     expect(await eventsOf(t, emailId)).toHaveLength(1);
 
-    // Its scheduled clean-up finds the email now, so the event stays.
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await eventsOf(t, emailId)).toHaveLength(1);
   });

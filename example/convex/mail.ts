@@ -15,13 +15,13 @@ import {
   query,
 } from "./_generated/server.js";
 import { currentUser, requireUser } from "./auth.js";
-import { deliver } from "./example.js";
+import { deliverUnchecked } from "./example.js";
 import { routeAddresses, toMessage } from "./inbox.js";
 import { vAttachment, vFolder } from "./schema.js";
 
 const owner = "example";
+const folderUntilAnswered = "archive";
 
-/** Adds one of the component's emails to the mailbox. Doing it twice is harmless. */
 const file = async (
   ctx: MutationCtx,
   emailId: string,
@@ -39,7 +39,6 @@ const file = async (
   const m = toMessage(email);
   const inbound = m.direction === "inbound";
 
-  // A reply names what it answers, so the conversation is whichever we know first.
   let threadId: Id<"threads"> | undefined;
   for (const key of [...m.inReplyTo, ...m.references.toReversed()]) {
     const parent = await ctx.db
@@ -66,7 +65,6 @@ const file = async (
       }),
       unread: thread.unread || inbound,
       sent: thread.sent || !inbound,
-      // An answer brings an archived conversation back. Trash stays trash.
       ...(inbound && thread.folder === "archive" && { folder: "inbox" }),
     });
   } else {
@@ -75,8 +73,7 @@ const file = async (
       subject: m.subject,
       ...latest,
       search: searchOf(m.subject),
-      // Something we started waits under Sent until they answer.
-      folder: inbound ? "inbox" : "archive",
+      folder: inbound ? "inbox" : folderUntilAnswered,
       unread: inbound,
       sent: !inbound,
     });
@@ -115,11 +112,8 @@ export const fileSent = internalMutation({
   handler: (ctx, { emailId, attachments }) => file(ctx, emailId, attachments),
 });
 
-// --- What the inbox page calls. Every one checks who's asking first. ---
-
 export const me = query({
   args: {},
-  // Null rather than throwing, so the page can say why there's no mail.
   handler: (ctx) => currentUser(ctx),
 });
 
@@ -142,7 +136,6 @@ export const threads = query({
   handler: async (ctx, { view, inbox, unreadOnly, search, paginationOpts }) => {
     await requireUser(ctx);
     const threads = ctx.db.query("threads");
-    // Best match first while searching, newest first otherwise.
     if (search?.trim())
       return await threads
         .withSearchIndex("search_search", (q) => {
@@ -157,26 +150,37 @@ export const threads = query({
     const ordered =
       view === "sent"
         ? inbox
-          ? threads.withIndex("by_inbox_and_sent_and_lastAt", (q) =>
-              q.eq("inbox", inbox).eq("sent", true),
-            )
-          : threads.withIndex("by_sent_and_lastAt", (q) => q.eq("sent", true))
+          ? unreadOnly
+            ? threads.withIndex(
+                "by_inbox_and_sent_and_unread_and_lastAt",
+                (q) => q.eq("inbox", inbox).eq("sent", true).eq("unread", true),
+              )
+            : threads.withIndex("by_inbox_and_sent_and_lastAt", (q) =>
+                q.eq("inbox", inbox).eq("sent", true),
+              )
+          : unreadOnly
+            ? threads.withIndex("by_sent_and_unread_and_lastAt", (q) =>
+                q.eq("sent", true).eq("unread", true),
+              )
+            : threads.withIndex("by_sent_and_lastAt", (q) => q.eq("sent", true))
         : inbox
-          ? threads.withIndex("by_inbox_and_folder_and_lastAt", (q) =>
-              q.eq("inbox", inbox).eq("folder", view),
-            )
-          : threads.withIndex("by_folder_and_lastAt", (q) =>
-              q.eq("folder", view),
-            );
-    return await (
-      unreadOnly
-        ? // ponytail: skips read threads to fill a page, add unread to these
-          // indexes if a mailbox has many read ones.
-          ordered.filter((q) => q.eq(q.field("unread"), true))
-        : ordered
-    )
-      .order("desc")
-      .paginate(paginationOpts);
+          ? unreadOnly
+            ? threads.withIndex(
+                "by_inbox_and_folder_and_unread_and_lastAt",
+                (q) =>
+                  q.eq("inbox", inbox).eq("folder", view).eq("unread", true),
+              )
+            : threads.withIndex("by_inbox_and_folder_and_lastAt", (q) =>
+                q.eq("inbox", inbox).eq("folder", view),
+              )
+          : unreadOnly
+            ? threads.withIndex("by_folder_and_unread_and_lastAt", (q) =>
+                q.eq("folder", view).eq("unread", true),
+              )
+            : threads.withIndex("by_folder_and_lastAt", (q) =>
+                q.eq("folder", view),
+              );
+    return await ordered.order("desc").paginate(paginationOpts);
   },
 });
 
@@ -215,7 +219,6 @@ export const thread = query({
   },
 });
 
-// Its own query, as each one makes a paginated call into the component.
 export const deliveries = query({
   args: { emailId: v.string() },
   handler: async (ctx, { emailId }) => {
@@ -291,7 +294,6 @@ export const noteRouted = internalMutation({
   },
 });
 
-/** Routes a new address here, so its mail shows up with the rest. */
 export const addInbox = action({
   args: {
     address: v.string(),
@@ -321,7 +323,7 @@ export const addInbox = action({
           ? `${address} forwards to ${rule.forwardsTo}. Tick "Keep forwarding a copy" to bring it here too.`
           : `${address} already goes to another Worker. Change it in Cloudflare first, or pick another address.`,
       );
-    return { copiedTo: rule?.tookOver ? rule.forwardsTo : undefined };
+    return { copiedTo: rule?.copiedTo };
   },
 });
 
@@ -333,7 +335,6 @@ export const uploadUrl = mutation({
   },
 });
 
-/** Unread conversations in the Inbox, counted up to 100. */
 export const unreadCount = query({
   args: {},
   handler: async (ctx) => {
@@ -341,7 +342,7 @@ export const unreadCount = query({
     // ponytail: reads up to 100 rows to count, keep a counter if the badge should go higher.
     const unread = await ctx.db
       .query("threads")
-      .withIndex("by_folder_and_unread", (q) =>
+      .withIndex("by_folder_and_unread_and_lastAt", (q) =>
         q.eq("folder", "inbox").eq("unread", true),
       )
       .take(100);
@@ -365,7 +366,6 @@ export const allowed = internalQuery({
   },
 });
 
-// What the page uploads to send: a file in storage, named.
 const vUpload = vAttachment.omit("size");
 
 // ponytail: the email, attachments in base64 included, goes to the component's send
@@ -388,7 +388,7 @@ const send = async (
   );
   if (files.reduce((n, f) => n + f.blob.size, 0) > maxAttachmentBytes)
     throw new ConvexError("Attachments can be 10 MB at most, all together.");
-  const sent = await deliver(ctx, {
+  const sent = await deliverUnchecked(ctx, {
     ...email,
     ...(files.length > 0 && {
       attachments: await Promise.all(
@@ -401,7 +401,6 @@ const send = async (
       ),
     }),
   });
-  // Failed sends are filed too, so you can see them and try again.
   const threadId: Id<"threads"> | null = await ctx.runMutation(
     internal.mail.fileSent,
     {
@@ -431,7 +430,6 @@ export const reply = action({
       throw new ConvexError("That email isn't here anymore.");
     const { inbox, replyTo, subject, messageId, references } =
       toMessage(original);
-    // A send that failed has no ID, so its retry answers what it was answering.
     const chain = messageId ? [...references, messageId] : references;
     return await send(
       ctx,
@@ -471,11 +469,9 @@ export const compose = action({
   },
 });
 
-/** Files mail the component got before this index existed. Run once; reruns are harmless. */
 export const backfill = internalAction({
   args: { cursor: v.optional(v.string()) },
   handler: async (ctx, { cursor }) => {
-    // Oldest first, so a reply finds the conversation it belongs to.
     const { page, isDone, continueCursor } = await ctx.runQuery(
       components.cloudflareEmail.lib.page,
       { paginationOpts: { numItems: 100, cursor: cursor ?? null } },

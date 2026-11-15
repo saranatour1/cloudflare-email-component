@@ -1,10 +1,69 @@
 import type { Infer } from "convex/values";
-import type { BodyResponse, vEmail } from "./validators";
+import type { vEmail, vSendResult } from "./validators.js";
 
 const retryWaitsMs = [1000, 3000];
 const maxRecipients = 50;
 
-/** A list of addresses, or nothing if Cloudflare sent anything else, such as null. */
+export type CloudflareErrors = { code?: unknown; message?: string }[];
+
+type BodyResponse = {
+  success?: boolean;
+  errors?: CloudflareErrors;
+  result?: {
+    message_id?: unknown;
+    delivered?: unknown;
+    queued?: unknown;
+    permanent_bounces?: unknown;
+    suppressed_recipients?: unknown;
+  };
+} | null;
+
+// Cloudflare's own descriptions, by the message after this prefix:
+// https://developers.cloudflare.com/email-service/api/send-emails/rest-api/#error-responses
+const sendingError = "email.sending.error.";
+const meanings = new Map([
+  ["not_found", "Resource not found"],
+  ["invalid_request_schema", "Invalid request format"],
+  ["internal_server", "Internal server error"],
+  ["not_implemented", "Operation not implemented"],
+  ["throttled", "Rate limit exceeded"],
+  ["authentication.upstream", "Authentication service temporarily unavailable"],
+  ["authentication.unauthorized", "Missing or invalid API token"],
+  ["authentication.forbidden", "Token lacks permission to send"],
+  ["authentication.bad_token_type", "Wrong token type for this endpoint"],
+  ["authentication.not_entitled", "Account not entitled to use Email Sending"],
+  ["email.too_big", "Email exceeds size limit"],
+  ["email.no_content_length", "Missing content length"],
+  ["email.invalid", "Invalid email content"],
+  ["email.sending_disabled", "Sending disabled for this zone or account"],
+  ["email.account_suspended", "Email Sending is paused for the account"],
+]);
+
+export const cloudflareError = (
+  httpStatus: number,
+  body: { errors?: CloudflareErrors } | null,
+) => {
+  const errors = body?.errors ?? [];
+  const text = errors
+    .map(({ code, message = "" }) => {
+      const meaning = meanings.get(message.replace(sendingError, ""));
+      return (
+        [code, message].filter(Boolean).join(" ") +
+        (meaning ? `: ${meaning}` : "")
+      );
+    })
+    .filter(Boolean)
+    .join("; ");
+  const code = errors[0]?.code;
+  return {
+    error: text
+      ? `${text} (HTTP ${httpStatus})`
+      : `Cloudflare answered HTTP ${httpStatus} with no error details`,
+    ...(typeof code === "number" && { errorCode: code }),
+    httpStatus,
+  };
+};
+
 const addresses = (list: unknown) =>
   Array.isArray(list)
     ? list.filter((a): a is string => typeof a === "string")
@@ -18,14 +77,7 @@ export const sendThroughCloudflare = async ({
   accountId: string;
   apiToken: string;
   email: Infer<typeof vEmail>;
-}): Promise<{
-  messageId?: string;
-  error?: string;
-  delivered?: string[];
-  queued?: string[];
-  permanentBounces?: string[];
-  suppressed?: string[];
-}> => {
+}): Promise<Infer<typeof vSendResult>> => {
   const recipients = [email.to, email.cc, email.bcc].flat().filter(Boolean);
   if (recipients.length === 0)
     return { error: "One of `to`, `cc` or `bcc` is required" };
@@ -58,15 +110,8 @@ export const sendThroughCloudflare = async ({
 
     const body = (await res.json().catch(() => null)) as BodyResponse;
 
-    if (!res.ok || !body?.success)
-      return {
-        error:
-          body?.errors?.map((e) => e.message).join("; ") ||
-          `HTTP ${res.status}`,
-      };
+    if (!res.ok || !body?.success) return cloudflareError(res.status, body);
 
-    // The mail has gone out by now, so nothing in the answer's shape may throw here
-    // or fail the `send` action's return validator: that would record it as failed.
     const r = body.result ?? {};
     const outcome = {
       delivered: addresses(r.delivered),
@@ -76,12 +121,14 @@ export const sendThroughCloudflare = async ({
     };
     // Cloudflare can say success while refusing every address.
     const dropped = [
-      ...(outcome.permanentBounces ?? []),
-      ...(outcome.suppressed ?? []),
+      ...(outcome.permanentBounces ?? []).map((a) => `${a} bounced`),
+      ...(outcome.suppressed ?? []).map(
+        (a) => `${a} is on your suppression list`,
+      ),
     ];
     const accepted = outcome.delivered?.length || outcome.queued?.length;
     return dropped.length && !accepted
-      ? { ...outcome, error: `Not delivered to ${dropped.join(", ")}` }
+      ? { ...outcome, error: `Not delivered: ${dropped.join("; ")}` }
       : {
           ...outcome,
           messageId:

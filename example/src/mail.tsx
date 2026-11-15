@@ -259,7 +259,6 @@ function NavButton({
   onClick: () => void;
 }) {
   const look = variant ?? (current ? "default" : "ghost");
-  // As in shadcn's example: the selected folder is muted rather than white in dark mode.
   const selected =
     current &&
     "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white";
@@ -336,7 +335,6 @@ function MailList({
   open?: string;
   setOpen: (id: Id<"threads">) => void;
 }) {
-  // Waits for typing to settle before searching.
   const query = useDeferredValue(search.trim());
   const { results, status, loadMore } = usePaginatedQuery(
     api.mail.threads,

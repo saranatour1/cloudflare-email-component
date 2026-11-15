@@ -21,7 +21,6 @@ const allowed = (email: string | null) =>
     .split(",")
     .some((user) => user.trim().toLowerCase() === email.toLowerCase());
 
-/** The signed-in user's email, or null unless it's on INBOX_USERS. */
 export const currentUser = async (ctx: QueryCtx) => {
   const userId = await getAuthUserId(ctx);
   const email =
@@ -32,7 +31,6 @@ export const currentUser = async (ctx: QueryCtx) => {
   return allowed(email) ? email : null;
 };
 
-/** Anyone can make an account, but only those on INBOX_USERS see any mail. */
 export const requireUser = async (ctx: QueryCtx) => {
   const email = await currentUser(ctx);
   if (!email) throw new ConvexError("Not on INBOX_USERS.");

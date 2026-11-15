@@ -31,7 +31,6 @@ const eventsOf = async (
     })
   ).page;
 
-// What the component's /email/inbound route hands the app, after checking the secret.
 const receiveRaw = (
   t: ReturnType<typeof initConvexTest>,
   raw: string | Uint8Array,
@@ -43,7 +42,6 @@ const receiveRaw = (
     ...envelope,
   });
 
-// A user who signed up with this email, as Convex Auth's token names them.
 const signIn = async (
   t: ReturnType<typeof initConvexTest>,
   email = "me@example.com",
@@ -158,7 +156,6 @@ describe("example", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     await t.action(internal.example.onEvents, { events: [delivered] });
     await t.action(internal.example.onEvents, { events: [bounced] });
-    // Queues delivers at least once.
     await t.action(internal.example.onEvents, { events: [bounced] });
 
     const events = await eventsOf(t, emailId);
@@ -347,7 +344,6 @@ describe("example", () => {
         },
       });
 
-      // Only In-Reply-To, as some mail clients send.
       await receive(
         t,
         [
@@ -402,7 +398,7 @@ describe("example", () => {
         emailId: messages[0].id,
         text: "Hi",
       });
-      expect(failed.error).toBe("No");
+      expect(failed.error).toBe("No (HTTP 400)");
 
       const [thread] = await threadsOf(as);
       expect(thread.messages).toHaveLength(2);
@@ -575,6 +571,8 @@ describe("example", () => {
       const subjects = async (args: {
         search?: string;
         unreadOnly?: boolean;
+        inbox?: string;
+        view?: "sent";
       }) =>
         (
           await as.query(api.mail.threads, {
@@ -593,6 +591,12 @@ describe("example", () => {
       });
       expect(await subjects({ unreadOnly: true })).toEqual(["Café"]);
       expect(await subjects({ search: "noon", unreadOnly: true })).toEqual([]);
+      const inbox = "support@example.com";
+      expect(await subjects({ unreadOnly: true, inbox })).toEqual(["Café"]);
+      expect(await subjects({ unreadOnly: true, view: "sent" })).toEqual([]);
+      expect(await subjects({ unreadOnly: true, view: "sent", inbox })).toEqual(
+        [],
+      );
     });
 
     test("Add inbox routes a new address and remembers its domain's zone", async () => {
@@ -643,7 +647,6 @@ describe("example", () => {
         { domain: "example.com" },
       ]);
       calls.length = 0;
-      // The zone is remembered for the next address on the domain.
       await as.action(api.mail.addInbox, { address: "sales@example.com" });
       expect(calls).toContain(
         "POST https://api.cloudflare.com/client/v4/zones/zone/email/routing/rules",
@@ -711,14 +714,12 @@ describe("example", () => {
       ]);
       expect(await as.query(api.mail.inboxes)).toEqual(["taken@example.com"]);
 
-      // The next address on the domain keeps the copy going.
       await as.action(api.mail.addInbox, { address: "new@example.com" });
       expect(copyOfLastWorker()).toBe("me@else.com");
     });
 
     test("*@domain points the catch-all here and keeps its forward as a copy", async () => {
       vi.stubEnv("CONVEX_SITE_URL", "https://app.example");
-      // No `enabled`, which Cloudflare leaves out when it's the default, true.
       let catchAll: unknown = {
         matchers: [{ type: "all" }],
         actions: [{ type: "forward", value: ["me@else.com"] }],
@@ -768,9 +769,7 @@ describe("example", () => {
       expect(await as.query(api.mail.domains)).toEqual([
         { domain: "example.com", forwardTo: "me@else.com" },
       ]);
-      // Its addresses become inboxes as their mail arrives, not before.
       expect(await as.query(api.mail.inboxes)).toEqual([]);
-      // Once it comes here, running it again is harmless.
       expect(
         await as.action(api.mail.addInbox, { address: "*@example.com" }),
       ).toEqual({});

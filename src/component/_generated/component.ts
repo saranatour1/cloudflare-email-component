@@ -308,6 +308,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           delivered?: Array<string>;
           error?: string;
+          errorCode?: number;
+          httpStatus?: number;
           messageId?: string;
           permanentBounces?: Array<string>;
           queued?: Array<string>;

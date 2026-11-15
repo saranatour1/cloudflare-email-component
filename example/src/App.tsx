@@ -77,7 +77,6 @@ function Inbox() {
   return <Mail me={me} />;
 }
 
-// What the sign-in and sign-up mutations answer with, in words.
 const signInErrors: Record<string, string> = {
   USER_NOT_FOUND: "No account with that email. Sign up first.",
   INVALID_CREDENTIALS: "Wrong password.",

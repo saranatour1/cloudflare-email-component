@@ -21,7 +21,8 @@ export type Stored = {
   delivery?: string;
 };
 
-const maxPayloadBytes = 900 * 1024;
+const convexDocumentBytes = 1024 * 1024;
+const maxPayloadBytes = convexDocumentBytes - 124 * 1024;
 
 // shortcut: leaves entities like &amp; as they are, use a real converter to show
 // HTML mail properly. Safe, as the inbox never treats the result as HTML.
@@ -38,7 +39,6 @@ const addressOf = (address: Email["from"]) =>
 export const messageIds = (text?: string | null) =>
   text?.match(/<[^<>\s]+>/g) ?? ([] as string[]);
 
-// What's kept is what the app sealed, which here is plain JSON.
 export const toMessage = (email: Stored) => {
   const common = {
     id: email._id,
@@ -61,7 +61,6 @@ export const toMessage = (email: Stored) => {
     return {
       ...common,
       direction: "inbound" as const,
-      // The address it came in on is what makes it part of an inbox.
       inbox: mail.to.toLowerCase(),
       from: mail.from ?? "Unknown sender",
       fromName: mail.fromName,
@@ -97,7 +96,6 @@ export const toMessage = (email: Stored) => {
   };
 };
 
-// Parses what the component's /email/inbound route hands over.
 export const receive = internalAction({
   args: {
     raw: v.bytes(),
@@ -106,7 +104,6 @@ export const receive = internalAction({
   },
   returns: v.union(v.literal("accept"), v.literal("reject")),
   handler: async (ctx, { raw, envelopeFrom, envelopeTo }) => {
-    // A message it can't parse is still kept, as a retry would fail the same way.
     const mail = await PostalMime.parse(raw).catch(() => undefined);
     // shortcut: plain text. Encrypt real mail. Attachments go to file storage below.
     const payload = JSON.stringify({
@@ -124,7 +121,6 @@ export const receive = internalAction({
       references: mail?.references,
       attachments: mail?.attachments.map((a) => a.filename ?? "Unnamed"),
     });
-    // Retrying a message that can never fit in a document would fail forever.
     if (new TextEncoder().encode(payload).length > maxPayloadBytes)
       return "reject";
     const attachments = [];
@@ -148,11 +144,9 @@ export type Routed = {
   id: string;
   alreadyRouted?: true;
   forwardsTo?: string;
-  // Was a forwarding rule, now pointed here with its forwarding kept as a copy.
-  tookOver?: true;
+  copiedTo?: string;
 };
 
-// Cloudflare's API, for what the component has no helper for.
 const cloudflare = async (
   token: string,
   path: string,
@@ -184,7 +178,6 @@ type Rule = {
   actions?: { type?: string; value?: string[] }[];
 };
 
-/** `*@example.com` stands for the domain's catch-all rule: every address without its own. */
 const isCatchAll = (address: string) => address.startsWith("*@");
 
 const catchAllRule = async (zoneId: string, token: string, worker: string) => {
@@ -192,9 +185,7 @@ const catchAllRule = async (zoneId: string, token: string, worker: string) => {
     token,
     `/zones/${zoneId}/email/routing/rules/catch_all`,
   )) as Rule;
-  // `enabled` defaults to true, and Cloudflare can leave it out.
   const action = rule.enabled !== false ? rule.actions?.[0] : undefined;
-  // Dropping mail, or already coming here, leaves nothing to take over.
   if (
     !action ||
     action.type === "drop" ||
@@ -225,12 +216,6 @@ const pointAtWorker = (
     },
   });
 
-/**
- * Routes each address to this deployment through one Worker per domain. An address
- * that already has a routing rule is left as it is, unless `keepForwarding` is set
- * and the rule forwards: then it's pointed here, and the Worker forwards a copy to
- * where it went before. The Worker has one copy address for its whole domain.
- */
 export const routeAddresses = async (
   ctx: ActionCtx,
   zoneId: string,
@@ -262,7 +247,6 @@ export const routeAddresses = async (
         : await ruleFor(zoneId, apiToken, address),
     })),
   );
-  // Uploading the Worker again must not drop the copy it already sends.
   const known: { forwardTo?: string } | null = await ctx.runQuery(
     internal.mail.domainOf,
     { domain },
@@ -286,7 +270,7 @@ export const routeAddresses = async (
   for (const { address, rule } of existing) {
     if (rule && keepForwarding && rule.forwardsTo) {
       await pointAtWorker(zoneId, apiToken, { id: rule.id, address }, worker);
-      rules.push({ address, ...rule, tookOver: true });
+      rules.push({ address, ...rule, copiedTo: rule.forwardsTo });
     } else if (rule) rules.push({ address, alreadyRouted: true, ...rule });
     else if (isCatchAll(address)) {
       await pointAtWorker(
@@ -302,12 +286,10 @@ export const routeAddresses = async (
         id: await createRule(zoneId, apiToken, address, worker),
       });
   }
-  // Remembers the zone, so adding another address on this domain needs only the address.
   await ctx.runMutation(internal.mail.noteRouted, {
     domain,
     zoneId,
     forwardTo,
-    // A catch-all's addresses show up as inboxes when their mail arrives.
     addresses: rules
       .filter((r) => !r.alreadyRouted && !isCatchAll(r.address))
       .map((r) => r.address),
@@ -315,7 +297,6 @@ export const routeAddresses = async (
   return { worker, rules };
 };
 
-/** Run with every address that should be an inbox, and again to add more. */
 export const setUpInbox = internalAction({
   args: {
     zoneId: v.string(),
@@ -326,10 +307,6 @@ export const setUpInbox = internalAction({
     routeAddresses(ctx, zoneId, addresses, { keepForwarding }),
 });
 
-/**
- * Where each address on a domain goes, and what the inbox Worker posts to.
- * Read-only, for when mail doesn't show up.
- */
 export const routingStatus = internalAction({
   args: { domain: v.string() },
   handler: async (ctx, { domain }) => {
@@ -373,7 +350,6 @@ export const routingStatus = internalAction({
                 ?.map((a) => `${a.type} ${(a.value ?? []).join(", ")}`)
                 .join("; "),
             })),
-      // Secrets aren't readable, so this shows only the plain settings.
       workerSettings:
         typeof settings === "string"
           ? settings
