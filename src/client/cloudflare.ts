@@ -20,12 +20,19 @@ const request = async (path: string, token: string, init: RequestInit = {}) => {
 const withoutIdsOrQuery = (path: string) =>
   path.replace(/^\/(accounts|zones)\/[^/]+/, "/$1/…").replace(/\?.*/, "");
 
+const refusal = (
+  method: string,
+  path: string,
+  status: number,
+  body: Answer | null,
+) =>
+  new Error(
+    `${method} ${withoutIdsOrQuery(path)}: ${cloudflareError(status, body).error}`,
+  );
+
 const must = async (path: string, token: string, init?: RequestInit) => {
   const { ok, status, body } = await request(path, token, init);
-  if (!ok)
-    throw new Error(
-      `${init?.method ?? "GET"} ${withoutIdsOrQuery(path)}: ${cloudflareError(status, body).error}`,
-    );
+  if (!ok) throw refusal(init?.method ?? "GET", path, status, body);
   return body as Answer;
 };
 
@@ -35,8 +42,12 @@ const json = (method: string, body: unknown) => ({
   body: JSON.stringify(body),
 });
 
-const remove = (path: string, token: string) =>
-  request(path, token, { method: "DELETE" });
+const alreadyGone = 404;
+const remove = async (path: string, token: string) => {
+  const { ok, status, body } = await request(path, token, { method: "DELETE" });
+  if (!ok && status !== alreadyGone)
+    throw refusal("DELETE", path, status, body);
+};
 
 export const routingEnabled = async (zoneId: string, token: string) => {
   const { ok, body } = await request(`/zones/${zoneId}/email/routing`, token);
@@ -56,16 +67,19 @@ export const inboundWorker = `export default {
       },
       body: await new Response(message.raw).arrayBuffer(),
     })
-    if (res.status === 403 && !env.FORWARD_TO)
-      return message.setReject("This address isn't accepting mail right now.")
     if (!res.ok && res.status !== 403)
       throw new Error("The app didn't take the message: " + res.status)
+    const turnedAway =
+      res.status === 403 &&
+      ((await res.text()) === "Message too large"
+        ? "Message too large"
+        : "This address isn't accepting mail right now.")
+    if (turnedAway && !env.FORWARD_TO) return message.setReject(turnedAway)
     if (env.FORWARD_TO)
       await message.forward(env.FORWARD_TO).catch((e) => {
         console.error("Forward failed: " + e)
         // The app turned it away too, so nobody has it. Say so, or it vanishes.
-        if (res.status === 403)
-          message.setReject("This address isn't accepting mail right now.")
+        if (turnedAway) message.setReject(turnedAway)
       })
   },
 }

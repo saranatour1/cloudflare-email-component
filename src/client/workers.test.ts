@@ -76,7 +76,18 @@ describe("inboundWorker", () => {
     answers(403);
     const m = message();
     await inbound.email(m, env);
-    expect(m.setReject).toHaveBeenCalled();
+    expect(m.setReject).toHaveBeenCalledWith(
+      "This address isn't accepting mail right now.",
+    );
+  });
+
+  test("tells the sender when the app said the message was too large", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response("Message too large", { status: 403 }),
+    );
+    const m = message();
+    await inbound.email(m, env);
+    expect(m.setReject).toHaveBeenCalledWith("Message too large");
   });
 
   test("a 403 still forwards if there's somewhere to forward it", async () => {

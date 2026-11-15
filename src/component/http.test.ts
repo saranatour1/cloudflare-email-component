@@ -9,6 +9,7 @@ import {
 } from "vite-plus/test";
 import { createFunctionHandle, makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
+import { inboundWorker } from "../client/cloudflare.js";
 import { api } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
 import { initConvexTest } from "./setup.test.js";
@@ -89,6 +90,22 @@ describe("routes", () => {
     const t = initConvexTest();
     expect((await post(t, "/inbound", "in-secret", "Hi")).status).toBe(503);
     expect((await post(t, "/events", "ev-secret", "[]")).status).toBe(503);
+  });
+
+  test("turn away mail over the size limit, with the reason the Worker passes on", async () => {
+    const t = initConvexTest();
+    await t.mutation(api.lib.setHandlers, {
+      onReceive: await handle(t, "appOnReceive"),
+    });
+    const res = await post(
+      t,
+      "/inbound",
+      "in-secret",
+      new Uint8Array(15 * 1024 * 1024 + 1),
+    );
+    expect(res.status).toBe(403);
+    expect(inboundWorker).toContain(`"${await res.text()}"`);
+    expect(calls).toEqual([]);
   });
 
   test("hand inbound mail to the app, which can turn it away", async () => {

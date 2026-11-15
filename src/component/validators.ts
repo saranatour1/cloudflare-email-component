@@ -5,7 +5,6 @@ const vAddress = v.union(
   v.object({
     address: v.string(),
     name: v.optional(v.string()),
-    imageId: v.string().optional(),
   }),
 );
 
